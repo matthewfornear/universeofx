@@ -11,7 +11,7 @@ import { Header } from './header.js';
 
 let minimapHoveredIndex = null;
 const minimapMouse = { x: 0, y: 0 };
-let blurAmount = 0;
+let blurAmount = 8;
 
 // Pre-load all textures before starting
 const loader = new THREE.TextureLoader();
@@ -876,7 +876,14 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     function animate() {
       requestAnimationFrame(animate);
       // --- Intro Animation Sequence ---
-      if (!introStarted) return; // Wait for user to click overlay
+      if (!introStarted) {
+        controls.enabled = false;
+        stars.position.copy(camera.position);
+        setGalaxyBlur(blurAmount);
+        composer.render();
+        return;
+      }
+      controls.enabled = true;
       if (introPhase < 3) {
         if (introPhase === 0) {
           // Initial pause
@@ -918,7 +925,6 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
           const sunPos = solarSystemPositions[mainSystemIndex];
           smoothFocusCamera(camera, controls, sunPos);
           introPhase = 3;
-          controls.enabled = true;
           fadeInFindMe();
           console.log('System creation complete, intro finished');
         }
