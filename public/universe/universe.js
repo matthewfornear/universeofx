@@ -29,7 +29,7 @@ const texturePromises = [
 ];
 
 // Wait for all textures to load before starting
-Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...texturePromises])
+Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...texturePromises])
   .then(([users, ...textures]) => {
     // Store loaded textures
     const [
@@ -287,7 +287,7 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     minimapLabel.style.textShadow = '0 2px 8px #000';
     minimapLabel.style.width = '120px';
     minimapLabel.style.textAlign = 'center';
-    minimapLabel.style.marginBottom = '4px';
+    minimapLabel.style.marginBottom = '0';
     
     const minimapInstr = document.createElement('div');
     minimapInstr.innerText = 'click a star system to visit it';
@@ -298,7 +298,7 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     minimapInstr.style.textShadow = '0 2px 8px #000';
     minimapInstr.style.width = '200px';
     minimapInstr.style.textAlign = 'center';
-    minimapInstr.style.marginBottom = '8px';
+    minimapInstr.style.marginBottom = '0';
 
     const minimapContainer = document.createElement('div');
     minimapContainer.style.position = 'fixed';
@@ -308,6 +308,8 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     minimapContainer.style.flexDirection = 'column';
     minimapContainer.style.alignItems = 'center';
     minimapContainer.style.zIndex = '2000';
+    minimapContainer.style.opacity = '0'; // Start hidden
+    minimapContainer.style.transition = 'opacity 0.7s cubic-bezier(0.4,0,0.2,1)';
     minimapCanvas.style.position = '';
     minimapCanvas.style.top = '';
     minimapCanvas.style.right = '';
@@ -578,6 +580,54 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     }
     // When minimap or focus changes, call restoreSimpleSystem(previousIdx) and createDetailedSystem(newIdx)
 
+    // --- MUSIC FADE-IN ON LOAD & START OVERLAY ---
+    const audio = new Audio('/universe/music/1.mp3');
+    audio.loop = true;
+    audio.volume = 0;
+    document.body.appendChild(audio);
+    let musicFadedIn = false;
+    function fadeInAudio(targetVolume = 1, duration = 3000) {
+      const step = 0.02;
+      let vol = 0;
+      audio.volume = 0;
+      audio.play();
+      const interval = setInterval(() => {
+        vol += step;
+        if (vol >= targetVolume) {
+          audio.volume = targetVolume;
+          clearInterval(interval);
+        } else {
+          audio.volume = vol;
+        }
+      }, duration * step);
+    }
+
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.style.position = 'fixed';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100vw';
+    overlay.style.height = '100vh';
+    overlay.style.background = 'transparent';
+    overlay.style.display = 'flex';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.zIndex = '9999';
+    overlay.style.transition = 'opacity 0.7s cubic-bezier(0.4,0,0.2,1)';
+    overlay.innerHTML = `<button id="startUniverseBtn" class="pulse-hover cosmic-gradient" style="display:inline-block;height:40px;line-height:40px;padding:0 22px;border-radius:100px;color:#fff;font-weight:600;font-size:14px;letter-spacing:0.5px;border:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(6px);text-decoration:none;box-shadow:0 0 10px rgba(255,110,196,0.3);transition:transform 0.2s, box-shadow 0.2s;overflow:visible;cursor:pointer;">Enter Universe</button>`;
+    document.body.appendChild(overlay);
+
+    let introStarted = false;
+    const startBtn = document.getElementById('startUniverseBtn');
+    startBtn.onclick = () => {
+      overlay.style.opacity = '0';
+      setTimeout(() => overlay.remove(), 700);
+      fadeInAudio(1, 3000);
+      musicFadedIn = true;
+      introStarted = true;
+    };
+
     // --- INTRO ANIMATION: ZOOM ON GALAXY, THEN FOCUS ON MAIN SYSTEM ---
     let introPhase = 0; // 0: pause, 1: galaxy zoom, 2: system focus, 3: done
     let introProgress = 0;
@@ -825,8 +875,8 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     // --- 3D RAYCAST HOVER LOGIC (in animate loop) ---
     function animate() {
       requestAnimationFrame(animate);
-
       // --- Intro Animation Sequence ---
+      if (!introStarted) return; // Wait for user to click overlay
       if (introPhase < 3) {
         if (introPhase === 0) {
           // Initial pause
@@ -872,6 +922,13 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
           fadeInFindMe();
           console.log('System creation complete, intro finished');
         }
+      } else {
+        // Fade in minimap when intro is done
+        if (minimapContainer.style.opacity !== '1') {
+          minimapContainer.style.opacity = '1';
+        }
+        // Fade in music when intro is done (only once)
+        // (Handled by overlay click now)
       }
 
       // Rest of animation code...
@@ -1046,8 +1103,13 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     // 6. Align all spacing to a fixed scale
     tooltip.style.padding = '12px'; // Already set earlier, ensuring consistency
     tooltip.style.gap = '8px'; // Already set earlier
-    minimapLabel.style.marginBottom = '4px'; // Already set earlier
-    minimapInstr.style.marginBottom = '8px'; // Already set earlier
+    minimapLabel.style.marginBottom = '0';
+    minimapInstr.style.marginBottom = '0';
+    minimapCanvas.style.marginTop = '0';
+    minimapCanvas.style.marginBottom = '0';
+    minimapCanvas.style.display = 'block';
+    minimapContainer.style.gap = '4px';
+    minimapContainer.style.alignItems = 'center';
 
     // 7. Fade/shrink non-focused systems
     simpleSystemGroups.forEach((group, idx) => {
