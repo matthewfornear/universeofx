@@ -15,6 +15,9 @@ let blurAmount = 8;
 
 // Pre-load all textures before starting
 const loader = new THREE.TextureLoader();
+const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+
+// Use 2k textures for both mobile and desktop, but with mobile optimizations
 const texturePromises = [
   loader.loadAsync('/universe/textures/planets/2k_sun.jpg'),
   loader.loadAsync('/universe/textures/planets/2k_mercury.jpg'),
@@ -27,6 +30,13 @@ const texturePromises = [
   loader.loadAsync('/universe/textures/moons/2k_moon.jpg'),
   loader.loadAsync('/universe/textures/planets/2k_saturn_ring_alpha.png')
 ];
+
+// Add error handling for texture loading
+texturePromises.forEach(promise => {
+  promise.catch(error => {
+    console.warn('Texture loading error:', error);
+  });
+});
 
 // Wait for all textures to load before starting
 Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...texturePromises])
@@ -45,10 +55,16 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
       ringTexture
     ] = textures;
 
-    // Set texture properties
+    // Set texture properties with mobile optimizations
     textures.forEach(texture => {
       if (texture) {
         texture.encoding = THREE.sRGBEncoding;
+        if (isMobile) {
+          // Reduce texture quality on mobile
+          texture.minFilter = THREE.LinearFilter;
+          texture.magFilter = THREE.LinearFilter;
+          texture.generateMipmaps = false;
+        }
         texture.needsUpdate = true;
       }
     });
@@ -86,12 +102,16 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     camera.position.set(0, 600, 1600);
     camera.lookAt(0, 0, 0);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ 
+      antialias: !isMobile, // Disable antialiasing on mobile
+      powerPreference: 'high-performance',
+      failIfMajorPerformanceCaveat: false // Allow fallback on mobile
+    });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.outputEncoding = THREE.sRGBEncoding;
-    renderer.toneMappingExposure = 1.5;
-    renderer.shadowMap.enabled = true;
+    renderer.toneMappingExposure = isMobile ? 1.2 : 1.5; // Reduce exposure on mobile
+    renderer.shadowMap.enabled = !isMobile; // Disable shadows on mobile
     document.body.appendChild(renderer.domElement);
 
     // Starfield background
@@ -152,7 +172,6 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     rimLight.position.set(-2, 3, -2);
     scene.add(rimLight);
     // SSAO pass (disable on mobile)
-    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
     if (!isMobile) {
       const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
       ssaoPass.kernelRadius = 8;
@@ -587,16 +606,27 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     const audio = new Audio('/universe/music/1.mp3');
     audio.loop = true;
     audio.volume = 0;
+    audio.preload = 'none'; // Don't preload audio on mobile
     document.body.appendChild(audio);
     let musicFadedIn = false;
     function fadeInAudio(targetVolume = 1, duration = 3000) {
+      if (isMobile) {
+        // On mobile, only play audio after user interaction
+        const playAudio = () => {
+          audio.play().catch(e => {
+            console.warn('Audio play failed:', e);
+          });
+          document.removeEventListener('touchstart', playAudio);
+        };
+        document.addEventListener('touchstart', playAudio);
+        return;
+      }
+
       const step = 0.02;
       let vol = 0;
       audio.volume = 0;
       audio.loop = true;
-      // Try to play audio, but don't block if it fails
       audio.play().catch(e => {
-        // On mobile, this may fail, but that's OK
         console.warn('Audio play failed:', e);
       });
       const interval = setInterval(() => {
@@ -623,24 +653,67 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     overlay.style.justifyContent = 'center';
     overlay.style.zIndex = '9999';
     overlay.style.transition = 'opacity 0.7s cubic-bezier(0.4,0,0.2,1)';
-    overlay.innerHTML = `<button id="startUniverseBtn" type="button" class="pulse-hover cosmic-gradient" style="display:inline-block;height:40px;line-height:40px;padding:0 22px;border-radius:100px;color:#fff;font-weight:600;font-size:14px;letter-spacing:0.5px;border:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(6px);text-decoration:none;box-shadow:0 0 10px rgba(255,110,196,0.3);transition:transform 0.2s, box-shadow 0.2s;overflow:visible;cursor:pointer;">Enter Universe</button>`;
+    overlay.style.opacity = '1';
+    overlay.style.visibility = 'visible';
+    overlay.style.pointerEvents = 'auto';
+    overlay.innerHTML = `<button id="startUniverseBtn" type="button" class="pulse-hover cosmic-gradient" style="display:inline-block;height:40px;line-height:40px;padding:0 22px;border-radius:100px;color:#fff;font-weight:600;font-size:14px;letter-spacing:0.5px;border:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(6px);text-decoration:none;box-shadow:0 0 10px rgba(255,110,196,0.3);transition:transform 0.2s, box-shadow 0.2s;overflow:visible;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;">Enter Universe</button>`;
     document.body.appendChild(overlay);
 
     let introStarted = false;
     const startBtn = document.getElementById('startUniverseBtn');
+    
+    // iOS-specific button handling
     function startUniverseHandler(e) {
-      if (e) e.preventDefault();
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      
+      if (introStarted) return; // Prevent multiple starts
+      
+      // Ensure the button is visible and clickable
+      startBtn.style.pointerEvents = 'auto';
+      startBtn.style.opacity = '1';
+      
       overlay.style.opacity = '0';
-      setTimeout(() => overlay.remove(), 700);
-      fadeInAudio(1, 3000);
-      musicFadedIn = true;
-      introStarted = true;
+      setTimeout(() => {
+        overlay.remove();
+        // Start the universe
+        fadeInAudio(1, 3000);
+        musicFadedIn = true;
+        introStarted = true;
+      }, 700);
     }
-    startBtn.onclick = startUniverseHandler;
-    // Add touchend handler for mobile
-    startBtn.addEventListener('touchend', function(e) {
-      e.preventDefault();
-      startUniverseHandler(e);
+
+    // Add multiple event listeners for better iOS support
+    if (startBtn) {
+      startBtn.addEventListener('click', startUniverseHandler, { passive: false });
+      startBtn.addEventListener('touchend', startUniverseHandler, { passive: false });
+      startBtn.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+      
+      // Ensure the button is visible and clickable on iOS
+      if (isMobile) {
+        // Force a repaint to ensure the button is visible
+        startBtn.style.display = 'none';
+        startBtn.offsetHeight; // Force reflow
+        startBtn.style.display = 'inline-block';
+        
+        // Add iOS-specific styles
+        startBtn.style.webkitAppearance = 'none';
+        startBtn.style.webkitTouchCallout = 'none';
+        startBtn.style.webkitUserSelect = 'none';
+        startBtn.style.userSelect = 'none';
+      }
+    }
+
+    // Add error handling for initialization
+    window.addEventListener('error', function(event) {
+      console.error('Initialization error:', event.error);
+      // If there's an error, ensure the button is still visible
+      if (startBtn) {
+        startBtn.style.display = 'inline-block';
+        startBtn.style.opacity = '1';
+      }
     });
 
     // --- INTRO ANIMATION: ZOOM ON GALAXY, THEN FOCUS ON MAIN SYSTEM ---
@@ -1190,14 +1263,32 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
       if (systemNameLabel) {
         systemNameLabel.innerText = name;
         systemNameLabel.style.display = 'block';
-        gsap.fromTo(systemNameLabel, { opacity: 0, y: -10 }, { opacity: 1, y: 0, duration: 0.3 });
+        gsap.fromTo(systemNameLabel, 
+          { opacity: 0, y: -10 }, 
+          { 
+            opacity: 1, 
+            y: 0, 
+            duration: 0.2,
+            onComplete: () => {
+              // Start fade out after a short delay
+              setTimeout(() => {
+                hideSystemName();
+              }, 1000); // Show for 1 second before fading
+            }
+          }
+        );
       }
     }
     function hideSystemName() {
       if (systemNameLabel) {
-        gsap.to(systemNameLabel, { opacity: 0, y: -10, duration: 0.3, onComplete: () => {
+        gsap.to(systemNameLabel, { 
+          opacity: 0, 
+          y: -10, 
+          duration: 0.2, 
+          onComplete: () => {
             if (systemNameLabel) systemNameLabel.style.display = 'none';
-        }});
+          } 
+        });
       }
     }
     // Initial state for system name (hidden)
@@ -1215,6 +1306,24 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     window.onerror = function(message, source, lineno, colno, error) {
       alert('Error: ' + message);
     };
+
+    // Add mobile-specific error handling
+    window.addEventListener('error', function(event) {
+      if (isMobile) {
+        console.error('Mobile error:', event.error);
+        // Attempt to recover from error
+        if (event.error && event.error.message && event.error.message.includes('WebGL')) {
+          // Try to reinitialize with lower settings
+          renderer.dispose();
+          renderer = new THREE.WebGLRenderer({ 
+            antialias: false,
+            powerPreference: 'low-power'
+          });
+          renderer.setSize(window.innerWidth, window.innerHeight);
+          document.body.appendChild(renderer.domElement);
+        }
+      }
+    });
 
   }) // Closes the .then(([users, ...textures]) => { ... })
   .catch(error => {
