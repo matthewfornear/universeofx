@@ -399,11 +399,11 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
         detailedSystemGroup = null;
       }
     }
+    // --- GLOBAL UNIQUE USER POOL ---
+    const usedHandlesGlobal = new Set();
     function createDetailedSystem(sysIdx) {
       removeDetailedSystem();
-      // Hide the simple system group for the focused system
       if (simpleSystemGroups[sysIdx]) simpleSystemGroups[sysIdx].visible = false;
-      // --- CREATE DETAILED SOLAR SYSTEM ---
       const system = solarSystems[sysIdx];
       const { sun, planets } = system;
       const sysPos = solarSystemPositions[sysIdx];
@@ -415,7 +415,6 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
       systemGroup.position.set(sysPos.x, sysPos.y, sysPos.z);
       scene.add(systemGroup);
       detailedSystemGroup = systemGroup;
-      // Sun (detailed)
       const sunMaterial = new THREE.MeshStandardMaterial({
         map: sunTexture,
         emissive: new THREE.Color(0xffffaa),
@@ -427,14 +426,16 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
       sunMesh.castShadow = true;
       sunMesh.receiveShadow = true;
       systemGroup.add(sunMesh);
-      // Add a point light to the sun
       const sunLight = new THREE.PointLight(0xffffff, 2, 800);
       sunLight.position.set(0, 0, 0);
       sunLight.castShadow = true;
       sunMesh.add(sunLight);
-      // Planets (detailed)
       const planetOrbitGroups = [];
       const maxFollowers = sun.followers > 0 ? sun.followers : 1;
+      // --- Unique moon user pool (global) ---
+      usedHandlesGlobal.add(sun.handle);
+      planets.forEach(p => usedHandlesGlobal.add(p.handle));
+      let globalUserIdx = 0;
       planets.forEach((u, i) => {
         if (!u || !u.handle) return;
         const orbitRadius = 80 + i * 60;
@@ -489,6 +490,20 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
           moonOrbitGroup.rotation.z = Math.random() * Math.PI * 0.5;
           mesh.add(moonOrbitGroup);
           moonOrbitGroups.push({ group: moonOrbitGroup, speed: moonSpeed });
+          // --- Assign a unique user to each moon (global, must have fewer followers than planet) ---
+          let moonUser = null;
+          let foundMoonUser = false;
+          while (globalUserIdx < users.length) {
+            const candidate = users[globalUserIdx];
+            globalUserIdx++;
+            if (!usedHandlesGlobal.has(candidate.handle) && candidate.followers < u.followers) {
+              moonUser = candidate;
+              usedHandlesGlobal.add(moonUser.handle);
+              foundMoonUser = true;
+              break;
+            }
+          }
+          if (!foundMoonUser) break; // No valid moon user left for this planet
           const moonMesh = new THREE.Mesh(
             new THREE.SphereGeometry(moonSize, 16, 16),
             new THREE.MeshStandardMaterial({
@@ -499,8 +514,7 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
           );
           moonMesh.castShadow = true;
           moonMesh.receiveShadow = true;
-          // Assign userData for tooltip (use planet's userData as base, but mark as moon)
-          moonMesh.userData = { ...u, isSun: false, isMoon: true, systemIndex: sysIdx };
+          moonMesh.userData = { ...moonUser, isSun: false, isMoon: true, systemIndex: sysIdx };
           const elevationAngle = (j / moonCount) * Math.PI * 2;
           let mx = moonDist * Math.cos(elevationAngle);
           let my = moonDist * Math.sin(elevationAngle) * 0.3;
@@ -774,32 +788,78 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
       findMeInput.value = '';
     }
 
-    // --- MINIMAP HOVER LOGIC FIX ---
+    // --- MINIMAP: YAW+PITCH ROTATION (NO ROLL, STABLE) ---
+    function getCameraYawPitch() {
+      // Get camera yaw (Y) and pitch (X) from its quaternion
+      const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+      return { yaw: euler.y, pitch: euler.x };
+    }
+    function renderMinimap() {
+      minimapCtx.clearRect(0, 0, minimapWidth, minimapHeight);
+      const { yaw, pitch } = getCameraYawPitch();
+      for (let i = 0; i < solarSystemPositions.length; i++) {
+        const pos = solarSystemPositions[i];
+        // Center on galaxyCenter
+        let x0 = pos.x - galaxyCenter.x;
+        let y0 = pos.y - galaxyCenter.y;
+        let z0 = pos.z - galaxyCenter.z;
+        // Apply pitch (X axis) then yaw (Y axis)
+        // Pitch rotation (around X)
+        let y1 = y0 * Math.cos(-pitch) - z0 * Math.sin(-pitch);
+        let z1 = y0 * Math.sin(-pitch) + z0 * Math.cos(-pitch);
+        // Yaw rotation (around Y)
+        let x2 = x0 * Math.cos(-yaw) - z1 * Math.sin(-yaw);
+        let z2 = x0 * Math.sin(-yaw) + z1 * Math.cos(-yaw);
+        const scale = 0.45 * minimapWidth / (galaxyRadius * 2);
+        const x = minimapWidth / 2 + x2 * scale;
+        const y = minimapHeight / 2 - y1 * scale;
+        minimapCtx.beginPath();
+        minimapCtx.arc(x, y, (i === focusedSystemIndex ? 10 : 6), 0, Math.PI * 2);
+        minimapCtx.fillStyle = (i === focusedSystemIndex) ? '#ffcc33' : '#aaaaff';
+        minimapCtx.globalAlpha = (i === focusedSystemIndex) ? 1 : 0.7;
+        minimapCtx.fill();
+        minimapCtx.globalAlpha = 1;
+        // Draw outline if hovered
+        if (i === minimapHoveredIndex) {
+          minimapCtx.save();
+          minimapCtx.beginPath();
+          minimapCtx.arc(x, y, (i === focusedSystemIndex ? 14 : 10), 0, Math.PI * 2);
+          minimapCtx.strokeStyle = '#fff';
+          minimapCtx.lineWidth = 3;
+          minimapCtx.shadowColor = '#fff';
+          minimapCtx.shadowBlur = 8;
+          minimapCtx.stroke();
+          minimapCtx.restore();
+        }
+      }
+    }
+
+    // --- MINIMAP HOVER LOGIC: YAW+PITCH ROTATION ---
     minimapCanvas.addEventListener('mousemove', (e) => {
       const rect = minimapCanvas.getBoundingClientRect();
       minimapMouse.x = e.clientX - rect.left;
       minimapMouse.y = e.clientY - rect.top;
-      // Project all systems to minimap 2D and find closest (use 3D camera-aligned projection, centered on galaxyCenter)
+      const { yaw, pitch } = getCameraYawPitch();
       let closestIdx = null;
       let closestDist = 1e9;
-      let closestXY = null;
       for (let i = 0; i < solarSystemPositions.length; i++) {
         const pos = solarSystemPositions[i];
-        const worldPos = new THREE.Vector3(
-          pos.x - galaxyCenter.x,
-          pos.y - galaxyCenter.y,
-          pos.z - galaxyCenter.z
-        );
-        const camMatrix = new THREE.Matrix4().copy(camera.matrixWorldInverse);
-        const camSpace = worldPos.clone().applyMatrix4(camMatrix);
+        let x0 = pos.x - galaxyCenter.x;
+        let y0 = pos.y - galaxyCenter.y;
+        let z0 = pos.z - galaxyCenter.z;
+        // Pitch rotation (around X)
+        let y1 = y0 * Math.cos(-pitch) - z0 * Math.sin(-pitch);
+        let z1 = y0 * Math.sin(-pitch) + z0 * Math.cos(-pitch);
+        // Yaw rotation (around Y)
+        let x2 = x0 * Math.cos(-yaw) - z1 * Math.sin(-yaw);
+        let z2 = x0 * Math.sin(-yaw) + z1 * Math.cos(-yaw);
         const scale = 0.45 * minimapWidth / (galaxyRadius * 2);
-        const x = minimapWidth / 2 + camSpace.x * scale;
-        const y = minimapHeight / 2 - camSpace.y * scale;
+        const x = minimapWidth / 2 + x2 * scale;
+        const y = minimapHeight / 2 - y1 * scale;
         const d = Math.hypot(x - minimapMouse.x, y - minimapMouse.y);
         if (d < 18 && d < closestDist) {
           closestDist = d;
           closestIdx = i;
-          closestXY = { x, y };
         }
       }
       minimapHoveredIndex = closestIdx;
@@ -953,45 +1013,6 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
         resetButton.style.display = 'block';
       }
     });
-
-    // --- MINIMAP: 3D CAMERA-ALIGNED PROJECTION RESTORE ---
-    function renderMinimap() {
-      minimapCtx.clearRect(0, 0, minimapWidth, minimapHeight);
-      // Project each system into camera space and plot its X/Y, centered on galaxyCenter
-      for (let i = 0; i < solarSystemPositions.length; i++) {
-        const pos = solarSystemPositions[i];
-        // Center on galaxyCenter
-        const worldPos = new THREE.Vector3(
-          pos.x - galaxyCenter.x,
-          pos.y - galaxyCenter.y,
-          pos.z - galaxyCenter.z
-        );
-        // Project into camera space
-        const camMatrix = new THREE.Matrix4().copy(camera.matrixWorldInverse);
-        const camSpace = worldPos.clone().applyMatrix4(camMatrix);
-        const scale = 0.45 * minimapWidth / (galaxyRadius * 2);
-        const x = minimapWidth / 2 + camSpace.x * scale;
-        const y = minimapHeight / 2 - camSpace.y * scale;
-        minimapCtx.beginPath();
-        minimapCtx.arc(x, y, (i === focusedSystemIndex ? 10 : 6), 0, Math.PI * 2);
-        minimapCtx.fillStyle = (i === focusedSystemIndex) ? '#ffcc33' : '#aaaaff';
-        minimapCtx.globalAlpha = (i === focusedSystemIndex) ? 1 : 0.7;
-        minimapCtx.fill();
-        minimapCtx.globalAlpha = 1;
-        // Draw outline if hovered
-        if (i === minimapHoveredIndex) {
-          minimapCtx.save();
-          minimapCtx.beginPath();
-          minimapCtx.arc(x, y, (i === focusedSystemIndex ? 14 : 10), 0, Math.PI * 2);
-          minimapCtx.strokeStyle = '#fff';
-          minimapCtx.lineWidth = 3;
-          minimapCtx.shadowColor = '#fff';
-          minimapCtx.shadowBlur = 8;
-          minimapCtx.stroke();
-          minimapCtx.restore();
-        }
-      }
-    }
 
     // 1. Add minimap click handler
     minimapCanvas.addEventListener('click', () => {
