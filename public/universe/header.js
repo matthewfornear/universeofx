@@ -89,6 +89,7 @@ export class Header {
     // Add My Star button
     const addMeBtn = document.createElement('a');
     addMeBtn.innerHTML = 'Add My Star';
+    addMeBtn.href = 'https://buy.stripe.com/aFadRa0wH7rW2Q4gDTb3q03';
     addMeBtn.target = '_blank';
     addMeBtn.className = 'pulse-hover cosmic-gradient';
     addMeBtn.style.display = 'inline-block';
@@ -107,6 +108,8 @@ export class Header {
     addMeBtn.style.transition = 'transform 0.2s, box-shadow 0.2s';
     addMeBtn.style.marginLeft = '12px';
     addMeBtn.style.overflow = 'visible';
+    addMeBtn.style.cursor = 'pointer';
+    addMeBtn.style.zIndex = '9999';
 
     searchContainer.appendChild(searchWrapper);
     searchContainer.appendChild(addMeBtn);

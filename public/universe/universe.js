@@ -151,12 +151,15 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     const rimLight = new THREE.DirectionalLight(0xffffff, 0.12);
     rimLight.position.set(-2, 3, -2);
     scene.add(rimLight);
-    // SSAO pass
-    const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
-    ssaoPass.kernelRadius = 8;
-    ssaoPass.minDistance = 0.005;
-    ssaoPass.maxDistance = 0.2;
-    composer.addPass(ssaoPass);
+    // SSAO pass (disable on mobile)
+    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+    if (!isMobile) {
+      const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
+      ssaoPass.kernelRadius = 8;
+      ssaoPass.minDistance = 0.005;
+      ssaoPass.maxDistance = 0.2;
+      composer.addPass(ssaoPass);
+    }
     // Feather the sun's glow (bloom gradient)
     bloomPass.strength = 1.2;
     bloomPass.radius = 0.8;
@@ -590,7 +593,12 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
       const step = 0.02;
       let vol = 0;
       audio.volume = 0;
-      audio.play();
+      audio.loop = true;
+      // Try to play audio, but don't block if it fails
+      audio.play().catch(e => {
+        // On mobile, this may fail, but that's OK
+        console.warn('Audio play failed:', e);
+      });
       const interval = setInterval(() => {
         vol += step;
         if (vol >= targetVolume) {
@@ -615,18 +623,25 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     overlay.style.justifyContent = 'center';
     overlay.style.zIndex = '9999';
     overlay.style.transition = 'opacity 0.7s cubic-bezier(0.4,0,0.2,1)';
-    overlay.innerHTML = `<button id="startUniverseBtn" class="pulse-hover cosmic-gradient" style="display:inline-block;height:40px;line-height:40px;padding:0 22px;border-radius:100px;color:#fff;font-weight:600;font-size:14px;letter-spacing:0.5px;border:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(6px);text-decoration:none;box-shadow:0 0 10px rgba(255,110,196,0.3);transition:transform 0.2s, box-shadow 0.2s;overflow:visible;cursor:pointer;">Enter Universe</button>`;
+    overlay.innerHTML = `<button id="startUniverseBtn" type="button" class="pulse-hover cosmic-gradient" style="display:inline-block;height:40px;line-height:40px;padding:0 22px;border-radius:100px;color:#fff;font-weight:600;font-size:14px;letter-spacing:0.5px;border:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(6px);text-decoration:none;box-shadow:0 0 10px rgba(255,110,196,0.3);transition:transform 0.2s, box-shadow 0.2s;overflow:visible;cursor:pointer;">Enter Universe</button>`;
     document.body.appendChild(overlay);
 
     let introStarted = false;
     const startBtn = document.getElementById('startUniverseBtn');
-    startBtn.onclick = () => {
+    function startUniverseHandler(e) {
+      if (e) e.preventDefault();
       overlay.style.opacity = '0';
       setTimeout(() => overlay.remove(), 700);
       fadeInAudio(1, 3000);
       musicFadedIn = true;
       introStarted = true;
-    };
+    }
+    startBtn.onclick = startUniverseHandler;
+    // Add touchend handler for mobile
+    startBtn.addEventListener('touchend', function(e) {
+      e.preventDefault();
+      startUniverseHandler(e);
+    });
 
     // --- INTRO ANIMATION: ZOOM ON GALAXY, THEN FOCUS ON MAIN SYSTEM ---
     let introPhase = 0; // 0: pause, 1: galaxy zoom, 2: system focus, 3: done
@@ -1192,6 +1207,14 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     if (solarSystems[mainSystemIndex] && solarSystems[mainSystemIndex].sun) {
         showSystemName(solarSystems[mainSystemIndex].sun.name || 'Unnamed System');
     }
+
+    // Add global error logging for mobile debugging
+    window.addEventListener('unhandledrejection', event => {
+      alert('Error: ' + event.reason);
+    });
+    window.onerror = function(message, source, lineno, colno, error) {
+      alert('Error: ' + message);
+    };
 
   }) // Closes the .then(([users, ...textures]) => { ... })
   .catch(error => {
