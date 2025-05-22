@@ -219,14 +219,22 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
 
     // --- CONSTELLATION MINIMAP GUI ---
     // Compute bounding box of all solar system positions in galaxy space
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let i = 0; i < solarSystemPositions.length; i++) {
       const pos = solarSystemPositions[i];
       if (pos.x < minX) minX = pos.x;
       if (pos.x > maxX) maxX = pos.x;
       if (pos.y < minY) minY = pos.y;
       if (pos.y > maxY) maxY = pos.y;
+      if (pos.z < minZ) minZ = pos.z;
+      if (pos.z > maxZ) maxZ = pos.z;
     }
+    // Calculate the absolute center of the universe bounding box
+    const galaxyCenter = {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+      z: (minZ + maxZ) / 2
+    };
     // Add margin
     const margin = 60;
     minX -= margin; maxX += margin; minY -= margin; maxY += margin;
@@ -771,13 +779,17 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
       const rect = minimapCanvas.getBoundingClientRect();
       minimapMouse.x = e.clientX - rect.left;
       minimapMouse.y = e.clientY - rect.top;
-      // Project all systems to minimap 2D and find closest (use 3D camera-aligned projection)
+      // Project all systems to minimap 2D and find closest (use 3D camera-aligned projection, centered on galaxyCenter)
       let closestIdx = null;
       let closestDist = 1e9;
       let closestXY = null;
       for (let i = 0; i < solarSystemPositions.length; i++) {
         const pos = solarSystemPositions[i];
-        const worldPos = new THREE.Vector3(pos.x, pos.y, pos.z);
+        const worldPos = new THREE.Vector3(
+          pos.x - galaxyCenter.x,
+          pos.y - galaxyCenter.y,
+          pos.z - galaxyCenter.z
+        );
         const camMatrix = new THREE.Matrix4().copy(camera.matrixWorldInverse);
         const camSpace = worldPos.clone().applyMatrix4(camMatrix);
         const scale = 0.45 * minimapWidth / (galaxyRadius * 2);
@@ -851,7 +863,7 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
           smoothFocusCamera(camera, controls, sunPos);
           introPhase = 3;
           controls.enabled = true;
-          // fadeInFindMe();
+          fadeInFindMe();
           console.log('System creation complete, intro finished');
         }
       }
@@ -945,11 +957,15 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     // --- MINIMAP: 3D CAMERA-ALIGNED PROJECTION RESTORE ---
     function renderMinimap() {
       minimapCtx.clearRect(0, 0, minimapWidth, minimapHeight);
-      // Project each system into camera space and plot its X/Y
+      // Project each system into camera space and plot its X/Y, centered on galaxyCenter
       for (let i = 0; i < solarSystemPositions.length; i++) {
         const pos = solarSystemPositions[i];
-        // Convert to Vector3
-        const worldPos = new THREE.Vector3(pos.x, pos.y, pos.z);
+        // Center on galaxyCenter
+        const worldPos = new THREE.Vector3(
+          pos.x - galaxyCenter.x,
+          pos.y - galaxyCenter.y,
+          pos.z - galaxyCenter.z
+        );
         // Project into camera space
         const camMatrix = new THREE.Matrix4().copy(camera.matrixWorldInverse);
         const camSpace = worldPos.clone().applyMatrix4(camMatrix);
@@ -976,4 +992,94 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
         }
       }
     }
+
+    // 1. Add minimap click handler
+    minimapCanvas.addEventListener('click', () => {
+      if (minimapHoveredIndex !== null) {
+        restoreSimpleSystem(focusedSystemIndex);
+        createPointsCloud(minimapHoveredIndex);
+        createDetailedSystem(minimapHoveredIndex);
+        focusedSystemIndex = minimapHoveredIndex;
+        const sunPos = solarSystemPositions[minimapHoveredIndex];
+        smoothFocusCamera(camera, controls, sunPos);
+      }
+    });
+
+    // 2. Set Inter font globally
+    document.body.style.fontFamily = "'Inter', sans-serif";
+    tooltip.style.fontFamily = "'Inter', sans-serif";
+    findMeContainer.style.fontFamily = "'Inter', sans-serif";
+    minimapLabel.style.fontFamily = "'Inter', sans-serif";
+    minimapInstr.style.fontFamily = "'Inter', sans-serif";
+    findMeInput.style.fontFamily = "'Inter', sans-serif";
+    findMeDropdown.style.fontFamily = "'Inter', sans-serif";
+
+    // 3. Animate tooltip appearance with gsap
+    function showTooltip() {
+      tooltip.style.opacity = '0';
+      tooltip.style.transform = 'scale(0.95)';
+      tooltip.style.display = 'block';
+      gsap.to(tooltip, { opacity: 1, scale: 1, duration: 0.25, ease: 'power2.out' });
+    }
+    function hideTooltip() {
+      gsap.to(tooltip, { opacity: 0, scale: 0.95, duration: 0.18, ease: 'power2.in', onComplete: () => { tooltip.style.display = 'none'; } });
+    }
+    // Replace tooltip.style.display = 'block' with showTooltip(), and 'none' with hideTooltip() in minimap and 3D hover logic
+
+    // 4. Fade in Find Me UI after intro zoom
+    findMeContainer.style.opacity = '0';
+    function fadeInFindMe() {
+      gsap.to(findMeContainer, { opacity: 1, duration: 0.7, ease: 'power2.out' });
+    }
+    // Call fadeInFindMe() at the end of the intro zoom (after controls.enabled = true)
+
+    // 5. Standardize border radii and box shadows
+    const borderRadius = '14px';
+    const boxShadow = '0 4px 20px rgba(0,0,0,0.22)';
+    tooltip.style.borderRadius = borderRadius;
+    tooltip.style.boxShadow = boxShadow;
+    findMeContainer.style.borderRadius = borderRadius;
+    findMeContainer.style.boxShadow = boxShadow;
+    findMeDropdown.style.borderRadius = borderRadius;
+    findMeDropdown.style.boxShadow = boxShadow;
+    minimapCanvas.style.borderRadius = borderRadius;
+    minimapCanvas.style.boxShadow = boxShadow;
+
+    // 6. Align all spacing to a fixed scale
+    tooltip.style.padding = '12px';
+    tooltip.style.gap = '8px';
+    findMeContainer.style.padding = '12px 24px';
+    findMeDropdown.style.padding = '6px 0';
+    minimapLabel.style.marginBottom = '4px';
+    minimapInstr.style.marginBottom = '8px';
+
+    // 7. Fade/shrink non-focused systems
+    simpleSystemGroups.forEach((group, idx) => {
+      if (idx !== focusedSystemIndex) {
+        group.traverse(obj => {
+          if (obj.material && obj.material.opacity !== undefined) {
+            obj.material.transparent = true;
+            obj.material.opacity = 0.25;
+            obj.scale.set(0.7, 0.7, 0.7);
+          }
+        });
+      } else {
+        group.traverse(obj => {
+          if (obj.material && obj.material.opacity !== undefined) {
+            obj.material.opacity = 1;
+            obj.scale.set(1, 1, 1);
+          }
+        });
+      }
+    });
+
+    // 8. Blur galaxy background during focus zoom
+    let blurAmount = 0;
+    function setGalaxyBlur(amount) {
+      renderer.domElement.style.filter = `blur(${amount}px)`;
+    }
+    // During introPhase 1 and 2, animate blur in/out
+    // In animate():
+    // if (introPhase === 1 || introPhase === 2) { blurAmount = Math.min(8, blurAmount + 0.2); } else { blurAmount = Math.max(0, blurAmount - 0.2); }
+    // setGalaxyBlur(blurAmount);
   });
