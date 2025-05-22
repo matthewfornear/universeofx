@@ -5,6 +5,13 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
+import { Header } from './header.js';
+
+let minimapHoveredIndex = null;
+const minimapMouse = { x: 0, y: 0 };
+let blurAmount = 0;
 
 // Pre-load all textures before starting
 const loader = new THREE.TextureLoader();
@@ -104,6 +111,9 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
         transparent: true
       })
     );
+    // Ensure stars always render in the background
+    stars.material.depthTest = false;
+    stars.material.depthWrite = false;
     scene.add(stars);
 
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
@@ -131,6 +141,26 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     composer.addPass(new RenderPass(scene, camera));
     const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.0, 0.2, 0.6);
     composer.addPass(bloomPass);
+
+    // 1. Lighting: SSAO, fill light, rim light, sun bloom
+    // Add a subtle directional fill light
+    const fillLight = new THREE.DirectionalLight(0x8888ff, 0.18);
+    fillLight.position.set(1, 2, 2);
+    scene.add(fillLight);
+    // Add rim light (back light) for planets
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.12);
+    rimLight.position.set(-2, 3, -2);
+    scene.add(rimLight);
+    // SSAO pass
+    const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
+    ssaoPass.kernelRadius = 8;
+    ssaoPass.minDistance = 0.005;
+    ssaoPass.maxDistance = 0.2;
+    composer.addPass(ssaoPass);
+    // Feather the sun's glow (bloom gradient)
+    bloomPass.strength = 1.2;
+    bloomPass.radius = 0.8;
+    bloomPass.threshold = 0.2;
 
     const createGlowMaterial = (color = 0xffffff, intensity = 1, size = 64) => {
       const canvas = document.createElement('canvas');
@@ -181,10 +211,6 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
         mainSystemIndex = i;
       }
     });
-
-    // --- Minimap hover state (fix ReferenceError) ---
-    let minimapMouse = { x: 0, y: 0 };
-    let minimapHoveredIndex = null;
 
     // --- GALAXY LAYOUT: RANDOM NON-OVERLAPPING SPHERE ---
     function randomPointInSphere(radius) {
@@ -240,51 +266,55 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     minX -= margin; maxX += margin; minY -= margin; maxY += margin;
     const minimapWidth = Math.ceil((maxX - minX) / (galaxyRadius * 2) * 600) + margin * 2;
     const minimapHeight = Math.ceil((maxY - minY) / (galaxyRadius * 2) * 600) + margin * 2;
+    // Create minimapCanvas before label/instr/container
     const minimapCanvas = document.createElement('canvas');
     minimapCanvas.width = minimapWidth;
     minimapCanvas.height = minimapHeight;
-    minimapCanvas.style.position = 'fixed';
-    minimapCanvas.style.top = '24px';
-    minimapCanvas.style.right = '24px';
-    minimapCanvas.style.width = minimapWidth + 'px';
-    minimapCanvas.style.height = minimapHeight + 'px';
-    minimapCanvas.style.zIndex = '2001';
-    minimapCanvas.style.pointerEvents = 'auto';
     minimapCanvas.style.background = 'transparent';
     minimapCanvas.style.borderRadius = '18px';
     minimapCanvas.style.boxShadow = '0 4px 24px rgba(0,0,0,0.25)';
-    document.body.appendChild(minimapCanvas);
+    minimapCanvas.style.pointerEvents = 'auto';
     const minimapCtx = minimapCanvas.getContext('2d');
     let focusedSystemIndex = null;
-
     // --- Minimap label and instructions ---
     const minimapLabel = document.createElement('div');
     minimapLabel.innerText = 'Minimap';
-    minimapLabel.style.position = 'fixed';
-    minimapLabel.style.top = '30px';
-    minimapLabel.style.right = (24 + minimapWidth/2 - 60) + 'px';
-    minimapLabel.style.width = '120px';
-    minimapLabel.style.textAlign = 'center';
     minimapLabel.style.fontWeight = 'bold';
     minimapLabel.style.fontSize = '18px';
     minimapLabel.style.color = '#fff';
     minimapLabel.style.zIndex = '2002';
     minimapLabel.style.pointerEvents = 'none';
     minimapLabel.style.textShadow = '0 2px 8px #000';
-    document.body.appendChild(minimapLabel);
+    minimapLabel.style.width = '120px';
+    minimapLabel.style.textAlign = 'center';
+    minimapLabel.style.marginBottom = '4px';
+    
     const minimapInstr = document.createElement('div');
     minimapInstr.innerText = 'click a star system to visit it';
-    minimapInstr.style.position = 'fixed';
-    minimapInstr.style.top = '54px';
-    minimapInstr.style.right = (24 + minimapWidth/2 - 100) + 'px';
-    minimapInstr.style.width = '200px';
-    minimapInstr.style.textAlign = 'center';
     minimapInstr.style.fontSize = '13px';
     minimapInstr.style.color = '#fff';
     minimapInstr.style.zIndex = '2002';
     minimapInstr.style.pointerEvents = 'none';
     minimapInstr.style.textShadow = '0 2px 8px #000';
-    document.body.appendChild(minimapInstr);
+    minimapInstr.style.width = '200px';
+    minimapInstr.style.textAlign = 'center';
+    minimapInstr.style.marginBottom = '8px';
+
+    const minimapContainer = document.createElement('div');
+    minimapContainer.style.position = 'fixed';
+    minimapContainer.style.top = '88px';
+    minimapContainer.style.right = '24px';
+    minimapContainer.style.display = 'flex';
+    minimapContainer.style.flexDirection = 'column';
+    minimapContainer.style.alignItems = 'center';
+    minimapContainer.style.zIndex = '2000';
+    minimapCanvas.style.position = '';
+    minimapCanvas.style.top = '';
+    minimapCanvas.style.right = '';
+    minimapContainer.appendChild(minimapLabel);
+    minimapContainer.appendChild(minimapInstr);
+    minimapContainer.appendChild(minimapCanvas);
+    document.body.appendChild(minimapContainer);
 
     // Update galaxyToMinimap to use bounding box
     function galaxyToMinimap(x, y) {
@@ -456,14 +486,16 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
         }
         let material;
         if (texture) {
-          material = new THREE.MeshStandardMaterial({
+          material = new THREE.MeshPhysicalMaterial({
             map: texture,
             color: 0xffffff,
             metalness,
-            roughness
+            roughness,
+            clearcoat: 0.3,
+            reflectivity: 0.1
           });
         } else {
-          material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+          material = new THREE.MeshPhysicalMaterial({ color: 0xff0000, clearcoat: 0.3, reflectivity: 0.1 });
         }
         const mesh = new THREE.Mesh(
           new THREE.SphereGeometry(size, 32, 32),
@@ -477,6 +509,7 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
         const glow = new THREE.Sprite(sharedPlanetGlowMaterial);
         glow.scale.set(size * 1.1, size * 1.1, 1);
         mesh.add(glow);
+        glow.raycast = () => null;
         // Add moons with Z elevation
         const moonCount = Math.floor(Math.random() * 3) + 1;
         for (let j = 0; j < moonCount; j++) {
@@ -527,7 +560,14 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
           const moonGlow = new THREE.Sprite(sharedMoonGlowMaterial);
           moonGlow.scale.set(moonSize * 1.1, moonSize * 1.1, 1);
           moonMesh.add(moonGlow);
+          moonGlow.raycast = () => null;
         }
+        // 3. Add faint orbit rings for each planet
+        const ringGeom = new THREE.RingGeometry(orbitRadius - 0.5, orbitRadius + 0.5, 64);
+        ringGeom.rotateX(-Math.PI / 2);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0x444455, side: THREE.DoubleSide, transparent: true, opacity: 0.3 });
+        const orbitRing = new THREE.Mesh(ringGeom, ringMat);
+        systemGroup.add(orbitRing);
       });
       systemGroup.userData.planetOrbitGroups = planetOrbitGroups;
       renderMinimap();
@@ -605,8 +645,9 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     window.addEventListener('mousemove', event => {
-      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       mouseEvent = event;
     });
 
@@ -636,156 +677,45 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     }
 
     // --- FIND ME GUI RESTORE & AUTOCOMPLETE ---
-    const findMeContainer = document.createElement('div');
-    findMeContainer.style.position = 'fixed';
-    findMeContainer.style.top = '32px';
-    findMeContainer.style.left = '50%';
-    findMeContainer.style.transform = 'translateX(-50%)';
-    findMeContainer.style.zIndex = '3002';
-    findMeContainer.style.background = 'rgba(40,40,60,0.95)';
-    findMeContainer.style.color = '#fff';
-    findMeContainer.style.fontFamily = 'Inter, sans-serif';
-    findMeContainer.style.fontSize = '18px';
-    findMeContainer.style.padding = '12px 24px';
-    findMeContainer.style.borderRadius = '16px';
-    findMeContainer.style.boxShadow = '0 4px 24px rgba(0,0,0,0.25)';
-    findMeContainer.style.display = 'flex';
-    findMeContainer.style.flexDirection = 'column';
-    findMeContainer.style.alignItems = 'center';
-    findMeContainer.style.gap = '8px';
-    // Title
-    const findMeTitle = document.createElement('div');
-    findMeTitle.innerText = 'Find Me!';
-    findMeTitle.style.fontWeight = 'bold';
-    findMeTitle.style.marginBottom = '2px';
-    findMeContainer.appendChild(findMeTitle);
-    // Input
-    const findMeInput = document.createElement('input');
-    findMeInput.type = 'text';
-    findMeInput.placeholder = 'Search username...';
-    findMeInput.style.fontSize = '16px';
-    findMeInput.style.padding = '6px 12px';
-    findMeInput.style.borderRadius = '8px';
-    findMeInput.style.border = 'none';
-    findMeInput.style.outline = 'none';
-    findMeInput.style.width = '220px';
-    findMeInput.style.marginBottom = '0px';
-    findMeContainer.appendChild(findMeInput);
-    // Dropdown
-    const findMeDropdown = document.createElement('div');
-    findMeDropdown.style.position = 'absolute';
-    findMeDropdown.style.top = '60px';
-    findMeDropdown.style.left = '50%';
-    findMeDropdown.style.transform = 'translateX(-50%)';
-    findMeDropdown.style.background = 'rgba(28,28,30,0.98)';
-    findMeDropdown.style.borderRadius = '12px';
-    findMeDropdown.style.boxShadow = '0 4px 20px rgba(0,0,0,0.25)';
-    findMeDropdown.style.padding = '4px 0';
-    findMeDropdown.style.zIndex = '3003';
-    findMeDropdown.style.minWidth = '220px';
-    findMeDropdown.style.display = 'none';
-    findMeContainer.appendChild(findMeDropdown);
-    document.body.appendChild(findMeContainer);
-    // Autocomplete logic
-    let findMeResults = [];
-    let findMeSelected = -1;
-    findMeInput.addEventListener('input', () => {
-      const val = findMeInput.value.trim().toLowerCase();
-      if (!val) {
-        findMeDropdown.style.display = 'none';
-        findMeDropdown.innerHTML = '';
-        findMeResults = [];
-        findMeSelected = -1;
+    const header = new Header(users, (user) => {
+      focusOnUser(user);
+    });
+
+    // Function to focus camera on a specific user
+    function focusOnUser(user) {
+      // Find which system the user belongs to
+      const systemIndex = solarSystems.findIndex(system =>
+        system.sun.handle === user.handle ||
+        system.planets.some(p => p.handle === user.handle)
+      );
+
+      if (systemIndex === -1) {
+        console.warn("User not found in any system:", user.handle);
         return;
       }
-      // Search users by handle (partial, case-insensitive)
-      findMeResults = users.filter(u => u.handle && u.handle.toLowerCase().includes(val)).slice(0, 4);
-      findMeDropdown.innerHTML = '';
-      findMeResults.forEach((u, idx) => {
-        const row = document.createElement('div');
-        row.style.display = 'flex';
-        row.style.alignItems = 'center';
-        row.style.gap = '10px';
-        row.style.padding = '6px 12px';
-        row.style.cursor = 'pointer';
-        row.style.background = idx === findMeSelected ? 'rgba(80,80,120,0.25)' : 'none';
-        row.addEventListener('mouseenter', () => {
-          findMeSelected = idx;
-          Array.from(findMeDropdown.children).forEach((c, i) => c.style.background = i === idx ? 'rgba(80,80,120,0.25)' : 'none');
-        });
-        row.addEventListener('mouseleave', () => {
-          findMeSelected = -1;
-          Array.from(findMeDropdown.children).forEach((c) => c.style.background = 'none');
-        });
-        row.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          focusOnUser(u);
-        });
-        const img = document.createElement('img');
-        img.src = `/pfp/${u.handle}.jpg`;
-        img.style.width = '32px';
-        img.style.height = '32px';
-        img.style.borderRadius = '50%';
-        img.style.objectFit = 'cover';
-        img.style.boxShadow = '0 0 6px rgba(0,0,0,0.2)';
-        row.appendChild(img);
-        const handle = document.createElement('span');
-        handle.innerText = '@' + u.handle;
-        handle.style.fontSize = '15px';
-        row.appendChild(handle);
-        findMeDropdown.appendChild(row);
+
+      // Only change if it's a different system
+      if (systemIndex !== focusedSystemIndex) {
+        restoreSimpleSystem(focusedSystemIndex);
+        createPointsCloud(systemIndex);
+        createDetailedSystem(systemIndex);
+        focusedSystemIndex = systemIndex;
+        renderMinimap();
+      }
+
+      // Find the user's mesh in the scene
+      let targetMesh = null;
+      scene.traverse((object) => {
+        if (object.userData && object.userData.handle === user.handle) {
+          targetMesh = object;
+        }
       });
-      findMeDropdown.style.display = findMeResults.length ? 'block' : 'none';
-      findMeSelected = -1;
-    });
-    findMeInput.addEventListener('keydown', (e) => {
-      if (!findMeResults.length) return;
-      if (e.key === 'ArrowDown') {
-        findMeSelected = (findMeSelected + 1) % findMeResults.length;
-        Array.from(findMeDropdown.children).forEach((c, i) => c.style.background = i === findMeSelected ? 'rgba(80,80,120,0.25)' : 'none');
-        e.preventDefault();
-      } else if (e.key === 'ArrowUp') {
-        findMeSelected = (findMeSelected - 1 + findMeResults.length) % findMeResults.length;
-        Array.from(findMeDropdown.children).forEach((c, i) => c.style.background = i === findMeSelected ? 'rgba(80,80,120,0.25)' : 'none');
-        e.preventDefault();
-      } else if (e.key === 'Enter') {
-        if (findMeSelected >= 0 && findMeSelected < findMeResults.length) {
-          focusOnUser(findMeResults[findMeSelected]);
-        } else if (findMeResults.length) {
-          focusOnUser(findMeResults[0]);
-        }
-        e.preventDefault();
+
+      if (targetMesh) {
+        const pos = targetMesh.getWorldPosition(new THREE.Vector3());
+        smoothFocusCamera(camera, controls, pos);
+        showSystemName(user.name || user.handle);
       }
-    });
-    function focusOnUser(user) {
-      // Find which system this user is in
-      let sysIdx = -1, planetIdx = -1;
-      for (let i = 0; i < solarSystems.length; i++) {
-        const sys = solarSystems[i];
-        if (sys.sun.handle === user.handle) { sysIdx = i; planetIdx = -1; break; }
-        const pIdx = sys.planets.findIndex(p => p.handle === user.handle);
-        if (pIdx !== -1) { sysIdx = i; planetIdx = pIdx; break; }
-      }
-      if (sysIdx === -1) return;
-      restoreSimpleSystem(focusedSystemIndex);
-      createPointsCloud(sysIdx);
-      createDetailedSystem(sysIdx);
-      focusedSystemIndex = sysIdx;
-      // Animate camera to sun or planet
-      let targetPos = solarSystemPositions[sysIdx];
-      if (planetIdx >= 0 && detailedSystemGroup) {
-        // Find the planet mesh in the detailed system
-        let found = null;
-        detailedSystemGroup.traverse(obj => {
-          if (obj.isMesh && obj.userData && obj.userData.handle === user.handle) found = obj;
-        });
-        if (found) {
-          targetPos = found.getWorldPosition(new THREE.Vector3());
-        }
-      }
-      smoothFocusCamera(camera, controls, targetPos);
-      findMeDropdown.style.display = 'none';
-      findMeInput.value = '';
     }
 
     // --- MINIMAP: YAW+PITCH ROTATION (NO ROLL, STABLE) ---
@@ -834,6 +764,10 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
       }
     }
 
+    // Track the currently hovered user for tooltip stability (3D and minimap)
+    let currentlyHoveredUser = null;
+    let currentlyHoveredMinimapIndex = null;
+
     // --- MINIMAP HOVER LOGIC: YAW+PITCH ROTATION ---
     minimapCanvas.addEventListener('mousemove', (e) => {
       const rect = minimapCanvas.getBoundingClientRect();
@@ -864,19 +798,31 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
       }
       minimapHoveredIndex = closestIdx;
       if (closestIdx !== null) {
-        // Show tooltip with sun info, ensure it's above minimap
-        const sun = solarSystems[closestIdx].sun;
-        tooltipImage.src = `/pfp/${sun.handle}.jpg`;
-        tooltipText.innerHTML = `<strong>${sun.name || ''}</strong><br/>@${sun.handle}<br/>${sun.bio ? `<em>${sun.bio}</em><br/>` : ''}Followers: ${sun.followers || 0}`;
-        tooltip.style.display = 'block';
-        tooltip.style.left = `${e.clientX + 16}px`;
-        tooltip.style.top = `${e.clientY - 8}px`;
-        tooltip.style.zIndex = '3005';
+        // Only update tooltip if hovered minimap index changes
+        if (currentlyHoveredMinimapIndex !== closestIdx) {
+          const sun = solarSystems[closestIdx].sun;
+          tooltipImage.src = `/pfp/${sun.handle}.jpg`;
+          tooltipText.innerHTML = `<strong>${sun.name || ''}</strong><br/>@${sun.handle}<br/>${sun.bio ? `<em>${sun.bio}</em><br/>` : ''}Followers: ${sun.followers || 0}`;
+          tooltip.style.left = `${e.clientX + 16}px`;
+          tooltip.style.top = `${e.clientY - 8}px`;
+          tooltip.style.zIndex = '3005';
+          showTooltip();
+        } else {
+          // Update position if still hovering same
+          tooltip.style.left = `${e.clientX + 16}px`;
+          tooltip.style.top = `${e.clientY - 8}px`;
+        }
+        currentlyHoveredMinimapIndex = closestIdx;
+        currentlyHoveredUser = null; // Clear 3D hover
       } else {
-        tooltip.style.display = 'none';
+        if (currentlyHoveredMinimapIndex !== null) {
+          hideTooltip();
+          currentlyHoveredMinimapIndex = null;
+        }
       }
     });
 
+    // --- 3D RAYCAST HOVER LOGIC (in animate loop) ---
     function animate() {
       requestAnimationFrame(animate);
 
@@ -932,8 +878,14 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
       controls.update();
       
       if (detailedSystemGroup && detailedSystemGroup.userData && detailedSystemGroup.userData.planetOrbitGroups) {
-        detailedSystemGroup.userData.planetOrbitGroups.forEach(({ group, speed }) => {
-          group.rotation.y += speed;
+        detailedSystemGroup.userData.planetOrbitGroups.forEach(({ group, speed }, idx) => {
+          // Easing: use a sine wave for speed variation
+          const t = performance.now() * 0.0001 + idx;
+          group.rotation.y += speed * (0.7 + 0.3 * Math.sin(t));
+          // Rotate planet mesh
+          group.children.forEach(child => {
+            if (child.isMesh) child.rotation.y += 0.002 + 0.001 * Math.sin(t);
+          });
         });
       }
       
@@ -951,28 +903,42 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
       if (focusAnim) focusAnim();
 
       // Update raycasting and tooltips
-      if (mouseEvent) {
-        raycaster.setFromCamera(mouse, camera);
-        // Only check detailed system meshes for hover
-        let intersectMeshes = [];
-        if (detailedSystemGroup) {
-          detailedSystemGroup.traverse(obj => {
-            if (obj.isMesh && obj.userData && obj.userData.handle) {
-              intersectMeshes.push(obj);
-            }
-          });
-        }
-        const intersects = raycaster.intersectObjects(intersectMeshes, true);
-        const first = intersects.find(i => i.object.userData && i.object.userData.handle);
-        if (first) {
-          const u = first.object.userData;
+      raycaster.setFromCamera(mouse, camera);
+      // Only check detailed system meshes for hover
+      let intersectMeshes = [];
+      if (detailedSystemGroup) {
+        detailedSystemGroup.traverse(obj => {
+          if (obj.isMesh && obj.userData && obj.userData.handle) {
+            intersectMeshes.push(obj);
+          }
+        });
+      }
+      const intersects = raycaster.intersectObjects(intersectMeshes, true);
+      const first = intersects.find(i => i.object.userData && i.object.userData.handle);
+      if (first) {
+        const u = first.object.userData;
+        // Only update tooltip if hovered user changes
+        if (!currentlyHoveredUser || currentlyHoveredUser.handle !== u.handle) {
           tooltipImage.src = `/pfp/${u.handle}.jpg`;
           tooltipText.innerHTML = `<strong>${u.name || ''}</strong><br/>@${u.handle}<br/><em>${u.bio || ''}</em><br/>Followers: ${u.followers || 0}`;
-          tooltip.style.display = 'block';
-          tooltip.style.left = `${mouseEvent.clientX + 12}px`;
-          tooltip.style.top = `${mouseEvent.clientY + 12}px`;
+          const x = mouseEvent ? mouseEvent.clientX : window.innerWidth / 2;
+          const y = mouseEvent ? mouseEvent.clientY : window.innerHeight / 2;
+          tooltip.style.left = `${x + 12}px`;
+          tooltip.style.top = `${y + 12}px`;
+          showTooltip();
         } else {
-          tooltip.style.display = 'none';
+          // Update position if still hovering same
+          const x = mouseEvent ? mouseEvent.clientX : window.innerWidth / 2;
+          const y = mouseEvent ? mouseEvent.clientY : window.innerHeight / 2;
+          tooltip.style.left = `${x + 12}px`;
+          tooltip.style.top = `${y + 12}px`;
+        }
+        currentlyHoveredUser = u;
+        currentlyHoveredMinimapIndex = null; // Clear minimap hover
+      } else {
+        if (currentlyHoveredUser) {
+          hideTooltip();
+          currentlyHoveredUser = null;
         }
       }
 
@@ -981,6 +947,14 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
 
       // Update minimap orientation to match camera
       renderMinimap();
+
+      // Blur galaxy background during focus zoom
+      if (introPhase === 1 || introPhase === 2) { 
+        blurAmount = Math.min(8, blurAmount + 0.2); 
+      } else { 
+        blurAmount = Math.max(0, blurAmount - 0.2); 
+      }
+      setGalaxyBlur(blurAmount);
 
       composer.render();
     }
@@ -992,9 +966,6 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
       renderer.setSize(window.innerWidth, window.innerHeight);
       composer.setSize(window.innerWidth, window.innerHeight);
     });
-
-    // Comment out or fix broken calls
-    // Comment out document.body.appendChild(findMeContainer); // Add findMeContainer to the DOM
 
     // Add double-click to zoom in on any entity
     renderer.domElement.addEventListener('dblclick', event => {
@@ -1010,7 +981,8 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
         const mesh = first.object;
         focusCameraOnMesh(mesh);
         lockedMesh = mesh;
-        resetButton.style.display = 'block';
+        // Assuming resetButton is defined elsewhere or remove this line if not
+        // resetButton.style.display = 'block'; 
       }
     });
 
@@ -1023,56 +995,59 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
         focusedSystemIndex = minimapHoveredIndex;
         const sunPos = solarSystemPositions[minimapHoveredIndex];
         smoothFocusCamera(camera, controls, sunPos);
+        if (solarSystems[focusedSystemIndex] && solarSystems[focusedSystemIndex].sun) {
+            showSystemName(solarSystems[focusedSystemIndex].sun.name || 'Unnamed System');
+        } else {
+            hideSystemName();
+        }
       }
     });
 
     // 2. Set Inter font globally
     document.body.style.fontFamily = "'Inter', sans-serif";
     tooltip.style.fontFamily = "'Inter', sans-serif";
-    findMeContainer.style.fontFamily = "'Inter', sans-serif";
     minimapLabel.style.fontFamily = "'Inter', sans-serif";
     minimapInstr.style.fontFamily = "'Inter', sans-serif";
-    findMeInput.style.fontFamily = "'Inter', sans-serif";
-    findMeDropdown.style.fontFamily = "'Inter', sans-serif";
 
     // 3. Animate tooltip appearance with gsap
     function showTooltip() {
+      gsap.killTweensOf(tooltip); // Cancel any ongoing hide animation
       tooltip.style.opacity = '0';
       tooltip.style.transform = 'scale(0.95)';
-      tooltip.style.display = 'block';
+      tooltip.style.display = 'block'; // Keep this for initial display before gsap
       gsap.to(tooltip, { opacity: 1, scale: 1, duration: 0.25, ease: 'power2.out' });
     }
     function hideTooltip() {
-      gsap.to(tooltip, { opacity: 0, scale: 0.95, duration: 0.18, ease: 'power2.in', onComplete: () => { tooltip.style.display = 'none'; } });
+      gsap.killTweensOf(tooltip); // Cancel any ongoing show animation
+      gsap.to(tooltip, { 
+        opacity: 0, 
+        scale: 0.95, 
+        duration: 0.18, 
+        ease: 'power2.in', 
+        onComplete: () => { 
+          tooltip.style.display = 'none'; 
+        } 
+      });
     }
-    // Replace tooltip.style.display = 'block' with showTooltip(), and 'none' with hideTooltip() in minimap and 3D hover logic
 
     // 4. Fade in Find Me UI after intro zoom
-    findMeContainer.style.opacity = '0';
     function fadeInFindMe() {
-      gsap.to(findMeContainer, { opacity: 1, duration: 0.7, ease: 'power2.out' });
+      header.show();
     }
-    // Call fadeInFindMe() at the end of the intro zoom (after controls.enabled = true)
 
     // 5. Standardize border radii and box shadows
     const borderRadius = '14px';
     const boxShadow = '0 4px 20px rgba(0,0,0,0.22)';
     tooltip.style.borderRadius = borderRadius;
     tooltip.style.boxShadow = boxShadow;
-    findMeContainer.style.borderRadius = borderRadius;
-    findMeContainer.style.boxShadow = boxShadow;
-    findMeDropdown.style.borderRadius = borderRadius;
-    findMeDropdown.style.boxShadow = boxShadow;
     minimapCanvas.style.borderRadius = borderRadius;
     minimapCanvas.style.boxShadow = boxShadow;
 
     // 6. Align all spacing to a fixed scale
-    tooltip.style.padding = '12px';
-    tooltip.style.gap = '8px';
-    findMeContainer.style.padding = '12px 24px';
-    findMeDropdown.style.padding = '6px 0';
-    minimapLabel.style.marginBottom = '4px';
-    minimapInstr.style.marginBottom = '8px';
+    tooltip.style.padding = '12px'; // Already set earlier, ensuring consistency
+    tooltip.style.gap = '8px'; // Already set earlier
+    minimapLabel.style.marginBottom = '4px'; // Already set earlier
+    minimapInstr.style.marginBottom = '8px'; // Already set earlier
 
     // 7. Fade/shrink non-focused systems
     simpleSystemGroups.forEach((group, idx) => {
@@ -1095,12 +1070,62 @@ Promise.all([fetch('/universe/universeseed.json').then(res => res.json()), ...te
     });
 
     // 8. Blur galaxy background during focus zoom
-    let blurAmount = 0;
     function setGalaxyBlur(amount) {
       renderer.domElement.style.filter = `blur(${amount}px)`;
     }
-    // During introPhase 1 and 2, animate blur in/out
-    // In animate():
-    // if (introPhase === 1 || introPhase === 2) { blurAmount = Math.min(8, blurAmount + 0.2); } else { blurAmount = Math.max(0, blurAmount - 0.2); }
-    // setGalaxyBlur(blurAmount);
+
+    // UI: backdrop-filter, shadows, hover animation, system name
+    minimapLabel.style.backdropFilter = 'blur(6px)';
+    minimapLabel.style.boxShadow = '0 8px 32px rgba(0,0,0,0.25)';
+
+    minimapLabel.addEventListener('mouseenter', () => { 
+      gsap.to(minimapLabel, { scale: 1.05, opacity: 1, duration: 0.2 });
+    });
+    minimapLabel.addEventListener('mouseleave', () => { 
+      gsap.to(minimapLabel, { scale: 1, opacity: 0.85, duration: 0.2 });
+    });
+    
+    // System name heading near sun
+    let systemNameLabel = document.getElementById('systemNameLabel'); // DECLARED HERE ONCE
+    if (!systemNameLabel) {
+      systemNameLabel = document.createElement('div');
+      systemNameLabel.id = 'systemNameLabel';
+      systemNameLabel.style.position = 'fixed';
+      systemNameLabel.style.top = '80px'; // Adjusted from original multiple definitions
+      systemNameLabel.style.left = '50%';
+      systemNameLabel.style.transform = 'translateX(-50%)';
+      systemNameLabel.style.fontSize = '22px';
+      systemNameLabel.style.fontWeight = 'bold';
+      systemNameLabel.style.color = '#fff';
+      systemNameLabel.style.textShadow = '0 2px 8px #000';
+      systemNameLabel.style.zIndex = '3004';
+      systemNameLabel.style.pointerEvents = 'none';
+      document.body.appendChild(systemNameLabel);
+    }
+
+    function showSystemName(name) {
+      if (systemNameLabel) {
+        systemNameLabel.innerText = name;
+        systemNameLabel.style.display = 'block';
+        gsap.fromTo(systemNameLabel, { opacity: 0, y: -10 }, { opacity: 1, y: 0, duration: 0.3 });
+      }
+    }
+    function hideSystemName() {
+      if (systemNameLabel) {
+        gsap.to(systemNameLabel, { opacity: 0, y: -10, duration: 0.3, onComplete: () => {
+            if (systemNameLabel) systemNameLabel.style.display = 'none';
+        }});
+      }
+    }
+    // Initial state for system name (hidden)
+    hideSystemName();
+
+    // Show system name when focusing on main system
+    if (solarSystems[mainSystemIndex] && solarSystems[mainSystemIndex].sun) {
+        showSystemName(solarSystems[mainSystemIndex].sun.name || 'Unnamed System');
+    }
+
+  }) // Closes the .then(([users, ...textures]) => { ... })
+  .catch(error => {
+    console.error('Error loading universe assets or processing users:', error);
   });
