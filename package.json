@@ -1,0 +1,17 @@
+{
+  "dependencies": {
+    "fs-extra": "^11.3.0",
+    "gsap": "^3.13.0",
+    "puppeteer": "^24.9.0"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "type": "module",
+  "scripts": {
+    "login": "node --loader ts-node/esm scripts/login.ts",
+    "collect-users": "node --loader ts-node/esm scripts/collectUsers.ts"
+  }
+}
