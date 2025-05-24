@@ -9,38 +9,370 @@ import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { Header } from './header.js';
 
+// Initialize texture loader
+const loader = new THREE.TextureLoader();
+
+// Error tracking
+const initializationErrors = [];
+let hasShownError = false;
+
+// Device detection
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+
+// Global state variables
+let introStarted = false;
+let musicFadedIn = false;
+let audio = null;
+let blurAmount = 8;
 let minimapHoveredIndex = null;
 const minimapMouse = { x: 0, y: 0 };
-let blurAmount = 8;
 
-// Pre-load all textures before starting
-const loader = new THREE.TextureLoader();
-const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+// Enhanced error logging
+function logError(phase, error, data = {}) {
+  try {
+    const errorInfo = {
+      phase,
+      message: error?.message || 'Unknown error',
+      stack: error?.stack,
+      timestamp: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      isIOS,
+      isSafari,
+      isMobile,
+      ...data
+    };
+    
+    console.error(`[${phase}]`, errorInfo);
+    
+    if (!window.universeErrors) {
+      window.universeErrors = [];
+    }
+    window.universeErrors.push(errorInfo);
+    
+    showError(`Error during ${phase}: ${errorInfo.message}`);
+  } catch (e) {
+    console.error('Error in error logging:', e);
+  }
+}
+
+// Enhanced error display
+function showError(message) {
+  try {
+    // Skip error display on mobile
+    if (isMobile) {
+      console.error('Error (mobile):', message);
+      return;
+    }
+
+    const existingError = document.getElementById('universeError');
+    if (existingError) {
+      existingError.remove();
+    }
+
+    const errorDiv = document.createElement('div');
+    errorDiv.id = 'universeError';
+    errorDiv.style.position = 'fixed';
+    errorDiv.style.top = '50%';
+    errorDiv.style.left = '50%';
+    errorDiv.style.transform = 'translate(-50%, -50%)';
+    errorDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.95)';
+    errorDiv.style.color = '#fff';
+    errorDiv.style.padding = '20px';
+    errorDiv.style.borderRadius = '10px';
+    errorDiv.style.textAlign = 'center';
+    errorDiv.style.fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+    errorDiv.style.fontSize = '16px';
+    errorDiv.style.zIndex = '9999';
+    errorDiv.style.maxWidth = '90%';
+    errorDiv.style.width = '400px';
+    errorDiv.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3)';
+    
+    errorDiv.textContent = `Error: ${message}`;
+    
+    document.body.appendChild(errorDiv);
+
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'childList') {
+          const errorElement = document.getElementById('universeError');
+          if (errorElement && !document.body.contains(errorElement)) {
+            document.body.appendChild(errorElement);
+          }
+        }
+      });
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+  } catch (e) {
+    console.error('Error in error display:', e);
+  }
+}
+
+// Global error handlers
+window.addEventListener('error', (event) => {
+  try {
+    // Skip error handling on mobile
+    if (isMobile) {
+      console.error('Runtime error (mobile):', event.error || event.message);
+      return;
+    }
+
+    logError('runtime', event.error || new Error(event.message), {
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno
+    });
+    event.preventDefault();
+  } catch (e) {
+    console.error('Error in error handler:', e);
+  }
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  try {
+    // Skip error handling on mobile
+    if (isMobile) {
+      console.error('Promise rejection (mobile):', event.reason);
+      return;
+    }
+
+    logError('promise', event.reason || new Error('Unhandled Promise Rejection'));
+    event.preventDefault();
+  } catch (e) {
+    console.error('Error in unhandledrejection handler:', e);
+  }
+});
+
+// Safe initialization wrapper
+function safeInitialize() {
+  try {
+    console.log('Starting initialization...');
+    
+    if (isMobile) {
+      console.log('Mobile device detected, initializing simplified view...');
+      initializeMobileView();
+    } else {
+      console.log('Desktop device detected, initializing full view...');
+      initializeDesktopView();
+    }
+  } catch (error) {
+    logError('safe_initialize', error);
+  }
+}
+
+// New function for mobile-specific initialization
+function initializeMobileView() {
+  try {
+    console.log('Initializing mobile message view...');
+    
+    // Create container
+    const container = document.createElement('div');
+    container.style.position = 'fixed';
+    container.style.top = '0';
+    container.style.left = '0';
+    container.style.width = '100%';
+    container.style.height = '100%';
+    container.style.background = '#000000';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.alignItems = 'center';
+    container.style.justifyContent = 'center';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+
+    // Create message element
+    const message = document.createElement('div');
+    message.style.color = '#ffffff';
+    message.style.fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+    message.style.fontSize = '18px';
+    message.style.textAlign = 'center';
+    message.style.padding = '20px';
+    message.style.maxWidth = '80%';
+    message.style.lineHeight = '1.5';
+    message.textContent = 'This is a graphically intense universe simulation. Please return on desktop.';
+    container.appendChild(message);
+
+  } catch (initError) {
+    console.error('Mobile initialization error:', initError);
+    // Show error state
+    const errorElement = document.createElement('div');
+    errorElement.style.position = 'fixed';
+    errorElement.style.top = '50%';
+    errorElement.style.left = '50%';
+    errorElement.style.transform = 'translate(-50%, -50%)';
+    errorElement.style.color = '#ff4444';
+    errorElement.style.fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+    errorElement.textContent = 'Unable to initialize view';
+    document.body.appendChild(errorElement);
+  }
+}
+
+// Desktop initialization
+function initializeDesktopView() {
+  try {
+    // Initialize audio and UI elements
+    function initializeAudioAndUI() {
+      try {
+        console.log('Initializing audio and UI...');
+        
+        // Initialize audio
+        audio = new Audio('/universe/music/1.mp3');
+        audio.loop = true;
+        audio.volume = 0;
+        audio.preload = 'none';
+        document.body.appendChild(audio);
+
+        // Create overlay only for non-mobile devices
+        if (!isMobile) {
+          console.log('Creating non-mobile overlay...');
+          const overlay = document.createElement('div');
+          overlay.style.position = 'fixed';
+          overlay.style.top = '0';
+          overlay.style.left = '0';
+          overlay.style.width = '100vw';
+          overlay.style.height = '100vh';
+          overlay.style.background = 'transparent';
+          overlay.style.display = 'flex';
+          overlay.style.alignItems = 'center';
+          overlay.style.justifyContent = 'center';
+          overlay.style.zIndex = '9999';
+          overlay.style.transition = 'opacity 0.7s cubic-bezier(0.4,0,0.2,1)';
+          overlay.style.opacity = '1';
+          overlay.style.visibility = 'visible';
+          overlay.style.pointerEvents = 'auto';
+          overlay.innerHTML = `<button id="startUniverseBtn" type="button" class="pulse-hover cosmic-gradient" style="display:inline-block;height:40px;line-height:40px;padding:0 22px;border-radius:100px;color:#fff;font-weight:600;font-size:14px;letter-spacing:0.5px;border:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(6px);text-decoration:none;box-shadow:0 0 10px rgba(255,110,196,0.3);transition:transform 0.2s, box-shadow 0.2s;overflow:visible;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;">Enter Universe</button>`;
+          document.body.appendChild(overlay);
+
+          const startBtn = document.getElementById('startUniverseBtn');
+          
+          function startUniverseHandler(e) {
+            try {
+              if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+              
+              if (introStarted) return;
+              
+              startBtn.style.pointerEvents = 'auto';
+              startBtn.style.opacity = '1';
+              
+              overlay.style.opacity = '0';
+              setTimeout(() => {
+                overlay.remove();
+                fadeInAudio(1, 3000);
+                musicFadedIn = true;
+                introStarted = true;
+              }, 700);
+            } catch (e) {
+              logError('start_universe', e);
+            }
+          }
+
+          if (startBtn) {
+            startBtn.addEventListener('click', startUniverseHandler, { passive: false });
+            startBtn.addEventListener('touchend', startUniverseHandler, { passive: false });
+            startBtn.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+          }
+        }
+      } catch (e) {
+        logError('audio_ui_init', e);
+      }
+    }
+
+    // Start initialization
+    console.log('Calling initializeAudioAndUI...');
+    initializeAudioAndUI();
+    
+  } catch (error) {
+    logError('desktop_initialization', error);
+  }
+}
+
+// Start initialization when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', safeInitialize);
+} else {
+  safeInitialize();
+}
+
+function trackError(phase, error) {
+  const errorInfo = {
+    phase,
+    message: error?.message || 'Unknown error',
+    stack: error?.stack,
+    timestamp: new Date().toISOString()
+  };
+  initializationErrors.push(errorInfo);
+  
+  // Only show the first error to avoid multiple popups
+  if (!hasShownError) {
+    hasShownError = true;
+    showError(`Error during ${phase}: ${errorInfo.message}`);
+  }
+}
+
+function fadeInAudio(targetVolume = 1, duration = 3000) {
+  if (isMobile || !audio) {
+    // Skip audio on mobile
+    return;
+  }
+
+  const step = 0.02;
+  let vol = 0;
+  audio.volume = 0;
+  audio.loop = true;
+  audio.play().catch(e => {
+    console.warn('Audio play failed:', e);
+  });
+  const interval = setInterval(() => {
+    vol += step;
+    if (vol >= targetVolume) {
+      audio.volume = targetVolume;
+      clearInterval(interval);
+    } else {
+      audio.volume = vol;
+    }
+  }, duration * step);
+}
 
 // Use 2k textures for both mobile and desktop, but with mobile optimizations
 const texturePromises = [
-  loader.loadAsync('/universe/textures/planets/2k_sun.jpg'),
-  loader.loadAsync('/universe/textures/planets/2k_mercury.jpg'),
-  loader.loadAsync('/universe/textures/planets/2k_mars.jpg'),
-  loader.loadAsync('/universe/textures/planets/2k_jupiter.jpg'),
-  loader.loadAsync('/universe/textures/planets/2k_saturn.jpg'),
-  loader.loadAsync('/universe/textures/planets/2k_uranus.jpg'),
-  loader.loadAsync('/universe/textures/planets/2k_neptune.jpg'),
-  loader.loadAsync('/universe/textures/planets/2k_ceres_fictional.jpg'),
-  loader.loadAsync('/universe/textures/moons/2k_moon.jpg'),
-  loader.loadAsync('/universe/textures/planets/2k_saturn_ring_alpha.png')
+  loader.loadAsync('/universe/textures/planets/2k_sun.jpg').catch(e => trackError('sun texture loading', e)),
+  loader.loadAsync('/universe/textures/planets/2k_mercury.jpg').catch(e => trackError('mercury texture loading', e)),
+  loader.loadAsync('/universe/textures/planets/2k_mars.jpg').catch(e => trackError('mars texture loading', e)),
+  loader.loadAsync('/universe/textures/planets/2k_jupiter.jpg').catch(e => trackError('jupiter texture loading', e)),
+  loader.loadAsync('/universe/textures/planets/2k_saturn.jpg').catch(e => trackError('saturn texture loading', e)),
+  loader.loadAsync('/universe/textures/planets/2k_uranus.jpg').catch(e => trackError('uranus texture loading', e)),
+  loader.loadAsync('/universe/textures/planets/2k_neptune.jpg').catch(e => trackError('neptune texture loading', e)),
+  loader.loadAsync('/universe/textures/planets/2k_ceres_fictional.jpg').catch(e => trackError('ceres texture loading', e)),
+  loader.loadAsync('/universe/textures/moons/2k_moon.jpg').catch(e => trackError('moon texture loading', e)),
+  loader.loadAsync('/universe/textures/planets/2k_saturn_ring_alpha.png').catch(e => trackError('ring texture loading', e))
 ];
 
 // Add error handling for texture loading
 texturePromises.forEach(promise => {
   promise.catch(error => {
-    console.warn('Texture loading error:', error);
+    trackError('texture loading', error);
   });
 });
 
 // Wait for all textures to load before starting
-Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...texturePromises])
-  .then(([users, ...textures]) => {
+Promise.all([
+  fetch('/universe/universe.json')
+    .then(res => {
+      if (!res.ok) {
+        throw new Error(`Failed to load universe.json: ${res.status} ${res.statusText}`);
+      }
+      return res.json();
+    })
+    .catch(e => trackError('universe.json loading', e)),
+  ...texturePromises
+])
+.then(([users, ...textures]) => {
+  try {
     // Store loaded textures
     const [
       sunTexture,
@@ -55,29 +387,42 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
       ringTexture
     ] = textures;
 
+    // Validate textures
+    textures.forEach((texture, index) => {
+      if (!texture) {
+        trackError('texture validation', new Error(`Missing texture at index ${index}`));
+      }
+    });
+
     // Set texture properties with mobile optimizations
     textures.forEach(texture => {
       if (texture) {
-        texture.encoding = THREE.sRGBEncoding;
-        if (isMobile) {
-          // Reduce texture quality on mobile
-          texture.minFilter = THREE.LinearFilter;
-          texture.magFilter = THREE.LinearFilter;
-          texture.generateMipmaps = false;
+        try {
+          texture.encoding = THREE.sRGBEncoding;
+          if (isMobile) {
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.generateMipmaps = false;
+          }
+          texture.needsUpdate = true;
+        } catch (e) {
+          trackError('texture optimization', e);
         }
-        texture.needsUpdate = true;
       }
     });
 
     // Add validation for users array
     if (!Array.isArray(users) || users.length === 0) {
-      console.error('No users loaded or malformed data:', users);
+      trackError('user data validation', new Error('No users loaded or malformed data'));
       return;
     }
 
     // Filter out users with 0 or null followers first
     users = users.filter(user => user && typeof user.followers === 'number' && user.followers > 0);
-    console.log('Filtered users count:', users.length);
+    if (users.length === 0) {
+      trackError('user filtering', new Error('No valid users after filtering'));
+      return;
+    }
 
     const sorted = [...users].sort((a, b) => b.followers - a.followers);
     const sun = sorted[0];
@@ -608,111 +953,137 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     audio.volume = 0;
     audio.preload = 'none'; // Don't preload audio on mobile
     document.body.appendChild(audio);
-    let musicFadedIn = false;
-    function fadeInAudio(targetVolume = 1, duration = 3000) {
+
+    // Add error handling for asset loading
+    window.addEventListener('error', function(event) {
+      try {
+        // Skip error handling on mobile
+        if (isMobile) {
+          console.error('Asset loading error (mobile):', event.error || event.message);
+          return;
+        }
+
+        const errorMsg = event.error ? event.error.message : 'An error occurred';
+        logError('runtime', new Error(errorMsg));
+        // If there's an error loading assets, try to continue with basic functionality
+        if (!introStarted) {
+          console.log('Asset loading error, attempting to continue with basic functionality...');
+          introStarted = true;
+          musicFadedIn = true;
+        }
+      } catch (e) {
+        console.error('Error in asset loading handler:', e);
+      }
+    });
+
+    // Add error handling for WebGL context
+    try {
+      const gl = renderer.getContext();
+      if (!gl) {
+        throw new Error('WebGL not supported');
+      }
+    } catch (error) {
+      // Skip error display on mobile
+      if (!isMobile) {
+        showError('WebGL not supported on this device');
+      }
+      // Try to reinitialize with lower settings
+      renderer.dispose();
+      renderer = new THREE.WebGLRenderer({ 
+        antialias: false,
+        powerPreference: 'low-power',
+        failIfMajorPerformanceCaveat: false
+      });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+    }
+
+    // Add visible error display function with more details
+    function showError(message) {
+      // Skip error display on mobile
       if (isMobile) {
-        // On mobile, only play audio after user interaction
-        const playAudio = () => {
-          audio.play().catch(e => {
-            console.warn('Audio play failed:', e);
-          });
-          document.removeEventListener('touchstart', playAudio);
-        };
-        document.addEventListener('touchstart', playAudio);
+        console.error('Error (mobile):', message);
         return;
       }
 
-      const step = 0.02;
-      let vol = 0;
-      audio.volume = 0;
-      audio.loop = true;
-      audio.play().catch(e => {
-        console.warn('Audio play failed:', e);
+      // Remove any existing error message
+      const existingError = document.getElementById('universeError');
+      if (existingError) {
+        existingError.remove();
+      }
+
+      // Create error container
+      const errorDiv = document.createElement('div');
+      errorDiv.id = 'universeError';
+      errorDiv.style.position = 'absolute';
+      errorDiv.style.top = '0';
+      errorDiv.style.left = '0';
+      errorDiv.style.right = '0';
+      errorDiv.style.backgroundColor = '#ff4444';
+      errorDiv.style.color = '#fff';
+      errorDiv.style.padding = '10px';
+      errorDiv.style.textAlign = 'center';
+      errorDiv.style.fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+      errorDiv.style.fontSize = '14px';
+      errorDiv.style.zIndex = '9999';
+      
+      // Add error message
+      errorDiv.textContent = `Error: ${message}`;
+      
+      // Add to the renderer's container instead of body
+      renderer.domElement.parentElement.insertBefore(errorDiv, renderer.domElement);
+
+      // Prevent the error from being pushed out of view
+      const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          if (mutation.type === 'childList') {
+            const errorElement = document.getElementById('universeError');
+            if (errorElement && !renderer.domElement.parentElement.contains(errorElement)) {
+              renderer.domElement.parentElement.insertBefore(errorElement, renderer.domElement);
+            }
+          }
+        });
       });
-      const interval = setInterval(() => {
-        vol += step;
-        if (vol >= targetVolume) {
-          audio.volume = targetVolume;
-          clearInterval(interval);
-        } else {
-          audio.volume = vol;
-        }
-      }, duration * step);
+
+      observer.observe(renderer.domElement.parentElement, { childList: true, subtree: true });
     }
 
-    // Create overlay
-    const overlay = document.createElement('div');
-    overlay.style.position = 'fixed';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100vw';
-    overlay.style.height = '100vh';
-    overlay.style.background = 'transparent';
-    overlay.style.display = 'flex';
-    overlay.style.alignItems = 'center';
-    overlay.style.justifyContent = 'center';
-    overlay.style.zIndex = '9999';
-    overlay.style.transition = 'opacity 0.7s cubic-bezier(0.4,0,0.2,1)';
-    overlay.style.opacity = '1';
-    overlay.style.visibility = 'visible';
-    overlay.style.pointerEvents = 'auto';
-    overlay.innerHTML = `<button id="startUniverseBtn" type="button" class="pulse-hover cosmic-gradient" style="display:inline-block;height:40px;line-height:40px;padding:0 22px;border-radius:100px;color:#fff;font-weight:600;font-size:14px;letter-spacing:0.5px;border:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(6px);text-decoration:none;box-shadow:0 0 10px rgba(255,110,196,0.3);transition:transform 0.2s, box-shadow 0.2s;overflow:visible;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;">Enter Universe</button>`;
-    document.body.appendChild(overlay);
+    // Add iOS-specific error handling
+    if (isMobile) {
+      window.addEventListener('error', function(event) {
+        event.preventDefault();
+        console.error('Runtime error (mobile):', event.error || event.message);
+      }, true);
 
-    let introStarted = false;
-    const startBtn = document.getElementById('startUniverseBtn');
-    
-    // iOS-specific button handling
-    function startUniverseHandler(e) {
-      if (e) {
-        e.preventDefault();
-        e.stopPropagation();
+      window.addEventListener('unhandledrejection', function(event) {
+        event.preventDefault();
+        console.error('Promise rejection (mobile):', event.reason);
+      }, true);
+    }
+
+    // Add global error handler
+    window.onerror = function(message, source, lineno, colno, error) {
+      // Skip error display on mobile
+      if (!isMobile) {
+        showError(message);
       }
-      
-      if (introStarted) return; // Prevent multiple starts
-      
-      // Ensure the button is visible and clickable
-      startBtn.style.pointerEvents = 'auto';
-      startBtn.style.opacity = '1';
-      
-      overlay.style.opacity = '0';
-      setTimeout(() => {
-        overlay.remove();
-        // Start the universe
-        fadeInAudio(1, 3000);
-        musicFadedIn = true;
-        introStarted = true;
-      }, 700);
-    }
+    };
 
-    // Add multiple event listeners for better iOS support
-    if (startBtn) {
-      startBtn.addEventListener('click', startUniverseHandler, { passive: false });
-      startBtn.addEventListener('touchend', startUniverseHandler, { passive: false });
-      startBtn.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
-      
-      // Ensure the button is visible and clickable on iOS
-      if (isMobile) {
-        // Force a repaint to ensure the button is visible
-        startBtn.style.display = 'none';
-        startBtn.offsetHeight; // Force reflow
-        startBtn.style.display = 'inline-block';
-        
-        // Add iOS-specific styles
-        startBtn.style.webkitAppearance = 'none';
-        startBtn.style.webkitTouchCallout = 'none';
-        startBtn.style.webkitUserSelect = 'none';
-        startBtn.style.userSelect = 'none';
-      }
-    }
-
-    // Add error handling for initialization
+    // Add mobile-specific error handling
     window.addEventListener('error', function(event) {
-      console.error('Initialization error:', event.error);
-      // If there's an error, ensure the button is still visible
-      if (startBtn) {
-        startBtn.style.display = 'inline-block';
-        startBtn.style.opacity = '1';
+      if (isMobile) {
+        console.error('Mobile error:', event.error || event.message);
+        // Attempt to recover from error
+        if (event.error && event.error.message && event.error.message.includes('WebGL')) {
+          // Try to reinitialize with lower settings
+          renderer.dispose();
+          renderer = new THREE.WebGLRenderer({ 
+            antialias: false,
+            powerPreference: 'low-power'
+          });
+          renderer.setSize(window.innerWidth, window.innerHeight);
+          document.body.appendChild(renderer.domElement);
+        }
       }
     });
 
@@ -961,155 +1332,179 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
     });
 
     // --- 3D RAYCAST HOVER LOGIC (in animate loop) ---
-    function animate() {
-      requestAnimationFrame(animate);
-      // --- Intro Animation Sequence ---
-      if (!introStarted) {
-        controls.enabled = false;
-        stars.position.copy(camera.position);
-        setGalaxyBlur(blurAmount);
-        composer.render();
-        return;
-      }
-      controls.enabled = true;
-      if (introPhase < 3) {
-        if (introPhase === 0) {
-          // Initial pause
-          introProgress += 1 / 60; // 1 second pause
-          if (introProgress >= 1) {
-            introProgress = 0;
-            introPhase = 1;
-            console.log('Starting galaxy zoom');
+    function safeAnimate() {
+      try {
+        requestAnimationFrame(safeAnimate);
+        
+        // --- Intro Animation Sequence ---
+        if (!introStarted) {
+          try {
+            controls.enabled = false;
+            stars.position.copy(camera.position);
+            setGalaxyBlur(blurAmount);
+            composer.render();
+            return;
+          } catch (e) {
+            logError('intro_animation', e);
+            introStarted = true; // Force continue if intro fails
           }
-        } else if (introPhase === 1) {
-          // Zoom in on galaxy to main system
-          introProgress += 1 / 180; // 3 second zoom
-          const t = Math.min(introProgress, 1);
-          // Use easing function for smoother animation
-          const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-          
-          camera.position.x = galaxyStart.x + (galaxyEnd.x - galaxyStart.x) * ease;
-          camera.position.y = galaxyStart.y + (galaxyEnd.y - galaxyStart.y) * ease;
-          camera.position.z = galaxyStart.z + (galaxyEnd.z - galaxyStart.z) * ease;
-          
-          // Gradually look at target system
-          const lookAtX = ease * galaxyEnd.x;
-          const lookAtY = ease * galaxyEnd.y;
-          const lookAtZ = ease * galaxyEnd.z;
-          camera.lookAt(lookAtX, lookAtY, lookAtZ);
+        }
 
-          if (t >= 1) {
-            introProgress = 0;
-            introPhase = 2;
-            console.log('Galaxy zoom complete, creating system');
+        try {
+          controls.enabled = true;
+          if (introPhase < 3) {
+            if (introPhase === 0) {
+              // Initial pause
+              introProgress += 1 / 60; // 1 second pause
+              if (introProgress >= 1) {
+                introProgress = 0;
+                introPhase = 1;
+                console.log('Starting galaxy zoom');
+              }
+            } else if (introPhase === 1) {
+              // Zoom in on galaxy to main system
+              introProgress += 1 / 180; // 3 second zoom
+              const t = Math.min(introProgress, 1);
+              // Use easing function for smoother animation
+              const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+              
+              camera.position.x = galaxyStart.x + (galaxyEnd.x - galaxyStart.x) * ease;
+              camera.position.y = galaxyStart.y + (galaxyEnd.y - galaxyStart.y) * ease;
+              camera.position.z = galaxyStart.z + (galaxyEnd.z - galaxyStart.z) * ease;
+              
+              // Gradually look at target system
+              const lookAtX = ease * galaxyEnd.x;
+              const lookAtY = ease * galaxyEnd.y;
+              const lookAtZ = ease * galaxyEnd.z;
+              camera.lookAt(lookAtX, lookAtY, lookAtZ);
+
+              if (t >= 1) {
+                introProgress = 0;
+                introPhase = 2;
+                console.log('Galaxy zoom complete, creating system');
+              }
+            } else if (introPhase === 2) {
+              try {
+                // Create detailed system and finish intro
+                createPointsCloud(mainSystemIndex); // Hide the focused system's point
+                createDetailedSystem(mainSystemIndex);
+                focusedSystemIndex = mainSystemIndex;
+                renderMinimap();
+                // Smoothly focus camera on the sun of the focused system
+                const sunPos = solarSystemPositions[mainSystemIndex];
+                smoothFocusCamera(camera, controls, sunPos);
+                introPhase = 3;
+                fadeInFindMe();
+                console.log('System creation complete, intro finished');
+              } catch (e) {
+                logError('system_creation', e);
+                introPhase = 3; // Force continue if system creation fails
+              }
+            }
+          } else {
+            // Fade in minimap when intro is done
+            if (minimapContainer.style.opacity !== '1') {
+              minimapContainer.style.opacity = '1';
+            }
           }
-        } else if (introPhase === 2) {
-          // Create detailed system and finish intro
-          createPointsCloud(mainSystemIndex); // Hide the focused system's point
-          createDetailedSystem(mainSystemIndex);
-          focusedSystemIndex = mainSystemIndex;
-          renderMinimap();
-          // Smoothly focus camera on the sun of the focused system
-          const sunPos = solarSystemPositions[mainSystemIndex];
-          smoothFocusCamera(camera, controls, sunPos);
-          introPhase = 3;
-          fadeInFindMe();
-          console.log('System creation complete, intro finished');
-        }
-      } else {
-        // Fade in minimap when intro is done
-        if (minimapContainer.style.opacity !== '1') {
-          minimapContainer.style.opacity = '1';
-        }
-        // Fade in music when intro is done (only once)
-        // (Handled by overlay click now)
-      }
 
-      // Rest of animation code...
-      controls.update();
-      
-      if (detailedSystemGroup && detailedSystemGroup.userData && detailedSystemGroup.userData.planetOrbitGroups) {
-        detailedSystemGroup.userData.planetOrbitGroups.forEach(({ group, speed }, idx) => {
-          // Easing: use a sine wave for speed variation
-          const t = performance.now() * 0.0001 + idx;
-          group.rotation.y += speed * (0.7 + 0.3 * Math.sin(t));
-          // Rotate planet mesh
-          group.children.forEach(child => {
-            if (child.isMesh) child.rotation.y += 0.002 + 0.001 * Math.sin(t);
-          });
-        });
-      }
-      
-      moonOrbitGroups.forEach(({ group, speed }) => {
-        group.rotation.y += speed;
-      });
+          // Rest of animation code...
+          try {
+            controls.update();
+            
+            if (detailedSystemGroup && detailedSystemGroup.userData && detailedSystemGroup.userData.planetOrbitGroups) {
+              detailedSystemGroup.userData.planetOrbitGroups.forEach(({ group, speed }, idx) => {
+                // Easing: use a sine wave for speed variation
+                const t = performance.now() * 0.0001 + idx;
+                group.rotation.y += speed * (0.7 + 0.3 * Math.sin(t));
+                // Rotate planet mesh
+                group.children.forEach(child => {
+                  if (child.isMesh) child.rotation.y += 0.002 + 0.001 * Math.sin(t);
+                });
+              });
+            }
+            
+            moonOrbitGroups.forEach(({ group, speed }) => {
+              group.rotation.y += speed;
+            });
 
-      // Keep locked entity at center if set
-      if (lockedMesh) {
-        const pos = lockedMesh.getWorldPosition(new THREE.Vector3());
-        controls.target.copy(pos);
-        controls.update();
-      }
-      
-      if (focusAnim) focusAnim();
+            // Keep locked entity at center if set
+            if (lockedMesh) {
+              const pos = lockedMesh.getWorldPosition(new THREE.Vector3());
+              controls.target.copy(pos);
+              controls.update();
+            }
+            
+            if (focusAnim) focusAnim();
 
-      // Update raycasting and tooltips
-      raycaster.setFromCamera(mouse, camera);
-      // Only check detailed system meshes for hover
-      let intersectMeshes = [];
-      if (detailedSystemGroup) {
-        detailedSystemGroup.traverse(obj => {
-          if (obj.isMesh && obj.userData && obj.userData.handle) {
-            intersectMeshes.push(obj);
+            // Update raycasting and tooltips
+            raycaster.setFromCamera(mouse, camera);
+            // Only check detailed system meshes for hover
+            let intersectMeshes = [];
+            if (detailedSystemGroup) {
+              detailedSystemGroup.traverse(obj => {
+                if (obj.isMesh && obj.userData && obj.userData.handle) {
+                  intersectMeshes.push(obj);
+                }
+              });
+            }
+            const intersects = raycaster.intersectObjects(intersectMeshes, true);
+            const first = intersects.find(i => i.object.userData && i.object.userData.handle);
+            if (first) {
+              const u = first.object.userData;
+              // Only update tooltip if hovered user changes
+              if (!currentlyHoveredUser || currentlyHoveredUser.handle !== u.handle) {
+                tooltipImage.src = `/pfp/${u.handle}.jpg`;
+                tooltipText.innerHTML = `<strong>${u.name || ''}</strong><br/>@${u.handle}<br/><em>${u.bio || ''}</em><br/>Followers: ${u.followers || 0}`;
+                const x = mouseEvent ? mouseEvent.clientX : window.innerWidth / 2;
+                const y = mouseEvent ? mouseEvent.clientY : window.innerHeight / 2;
+                tooltip.style.left = `${x + 12}px`;
+                tooltip.style.top = `${y + 12}px`;
+                showTooltip();
+              } else {
+                // Update position if still hovering same
+                const x = mouseEvent ? mouseEvent.clientX : window.innerWidth / 2;
+                const y = mouseEvent ? mouseEvent.clientY : window.innerHeight / 2;
+                tooltip.style.left = `${x + 12}px`;
+                tooltip.style.top = `${y + 12}px`;
+              }
+              currentlyHoveredUser = u;
+              currentlyHoveredMinimapIndex = null; // Clear minimap hover
+            } else {
+              if (currentlyHoveredUser) {
+                hideTooltip();
+                currentlyHoveredUser = null;
+              }
+            }
+
+            // Make the starfield always surround the camera
+            stars.position.copy(camera.position);
+
+            // Update minimap orientation to match camera
+            renderMinimap();
+
+            // Blur galaxy background during focus zoom
+            if (introPhase === 1 || introPhase === 2) { 
+              blurAmount = Math.min(8, blurAmount + 0.2); 
+            } else { 
+              blurAmount = Math.max(0, blurAmount - 0.2); 
+            }
+            setGalaxyBlur(blurAmount);
+
+            composer.render();
+          } catch (e) {
+            logError('animation_update', e);
           }
-        });
-      }
-      const intersects = raycaster.intersectObjects(intersectMeshes, true);
-      const first = intersects.find(i => i.object.userData && i.object.userData.handle);
-      if (first) {
-        const u = first.object.userData;
-        // Only update tooltip if hovered user changes
-        if (!currentlyHoveredUser || currentlyHoveredUser.handle !== u.handle) {
-          tooltipImage.src = `/pfp/${u.handle}.jpg`;
-          tooltipText.innerHTML = `<strong>${u.name || ''}</strong><br/>@${u.handle}<br/><em>${u.bio || ''}</em><br/>Followers: ${u.followers || 0}`;
-          const x = mouseEvent ? mouseEvent.clientX : window.innerWidth / 2;
-          const y = mouseEvent ? mouseEvent.clientY : window.innerHeight / 2;
-          tooltip.style.left = `${x + 12}px`;
-          tooltip.style.top = `${y + 12}px`;
-          showTooltip();
-        } else {
-          // Update position if still hovering same
-          const x = mouseEvent ? mouseEvent.clientX : window.innerWidth / 2;
-          const y = mouseEvent ? mouseEvent.clientY : window.innerHeight / 2;
-          tooltip.style.left = `${x + 12}px`;
-          tooltip.style.top = `${y + 12}px`;
+        } catch (e) {
+          logError('animation_loop', e);
         }
-        currentlyHoveredUser = u;
-        currentlyHoveredMinimapIndex = null; // Clear minimap hover
-      } else {
-        if (currentlyHoveredUser) {
-          hideTooltip();
-          currentlyHoveredUser = null;
-        }
+      } catch (e) {
+        logError('animation_frame', e);
       }
-
-      // Make the starfield always surround the camera
-      stars.position.copy(camera.position);
-
-      // Update minimap orientation to match camera
-      renderMinimap();
-
-      // Blur galaxy background during focus zoom
-      if (introPhase === 1 || introPhase === 2) { 
-        blurAmount = Math.min(8, blurAmount + 0.2); 
-      } else { 
-        blurAmount = Math.max(0, blurAmount - 0.2); 
-      }
-      setGalaxyBlur(blurAmount);
-
-      composer.render();
     }
-    animate();
+
+    // Replace the original animate() call with safeAnimate()
+    safeAnimate();
 
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
@@ -1299,33 +1694,226 @@ Promise.all([fetch('/universe/universe.json').then(res => res.json()), ...textur
         showSystemName(solarSystems[mainSystemIndex].sun.name || 'Unnamed System');
     }
 
-    // Add global error logging for mobile debugging
-    window.addEventListener('unhandledrejection', event => {
-      alert('Error: ' + event.reason);
+  } catch (error) {
+    trackError('initialization', error);
+  }
+})
+.catch(error => {
+  trackError('promise chain', error);
+});
+
+// Mobile optimization function
+function optimizeForMobile() {
+  console.log('Applying mobile optimizations...');
+  
+  // Disable all heavy features
+  window.ENABLE_SSAO = false;
+  window.ENABLE_BLOOM = false;
+  window.ENABLE_SHADOWS = false;
+  window.ENABLE_POST_PROCESSING = false;
+  window.ENABLE_HDR = false;
+  window.ENABLE_PARTICLES = false;
+  window.ENABLE_GLOW = false;
+  
+  // Reduce texture quality
+  window.TEXTURE_QUALITY = 'low';
+  window.MAX_TEXTURE_SIZE = 1024;
+  window.USE_MIPMAPS = false;
+  
+  // Reduce geometry complexity
+  window.SPHERE_SEGMENTS = 16;
+  window.RING_SEGMENTS = 32;
+  window.STAR_COUNT = 1000;
+  
+  // Reduce animation complexity
+  window.ANIMATION_FRAMERATE = 30;
+  window.USE_EASING = false;
+  
+  // Disable effects
+  window.USE_BLUR = false;
+  window.USE_FOG = false;
+  window.USE_AMBIENT_OCCLUSION = false;
+  
+  // Memory optimizations
+  window.ENABLE_TEXTURE_CACHING = false;
+  window.ENABLE_GEOMETRY_CACHING = false;
+  
+  // Performance settings
+  window.USE_LOW_POWER_MODE = true;
+  window.USE_HARDWARE_ACCELERATION = false;
+  
+  return {
+    renderer: {
+      antialias: false,
+      powerPreference: 'low-power',
+      precision: 'lowp',
+      alpha: false,
+      stencil: false,
+      depth: true,
+      failIfMajorPerformanceCaveat: false
+    },
+    composer: {
+      enabled: false
+    },
+    scene: {
+      fog: null,
+      background: new THREE.Color(0x000000)
+    },
+    camera: {
+      fov: 45,
+      near: 1,
+      far: 2000
+    },
+    controls: {
+      enableDamping: false,
+      dampingFactor: 0,
+      rotateSpeed: 0.5,
+      zoomSpeed: 0.5
+    }
+  };
+}
+
+// Modify createSafeRenderer to use mobile optimizations
+function createSafeRenderer() {
+  try {
+    const mobileSettings = isMobile ? optimizeForMobile() : null;
+    const renderer = new THREE.WebGLRenderer(mobileSettings?.renderer || { 
+      antialias: !isIOS,
+      powerPreference: isIOS ? 'low-power' : 'high-performance',
+      failIfMajorPerformanceCaveat: false,
+      precision: isIOS ? 'mediump' : 'highp'
     });
-    window.onerror = function(message, source, lineno, colno, error) {
-      alert('Error: ' + message);
+    
+    // iOS-specific optimizations
+    if (isIOS) {
+      renderer.setPixelRatio(1); // Force 1:1 pixel ratio
+      renderer.shadowMap.enabled = false;
+      renderer.shadowMap.type = THREE.BasicShadowMap;
+      renderer.info.autoReset = false;
+      renderer.domElement.style.filter = 'none';
+    }
+    
+    // Mobile-specific optimizations
+    if (isMobile) {
+      renderer.setPixelRatio(1);
+      renderer.shadowMap.enabled = false;
+      renderer.shadowMap.type = THREE.BasicShadowMap;
+      renderer.info.autoReset = false;
+      renderer.domElement.style.filter = 'none';
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+    }
+    
+    return renderer;
+  } catch (error) {
+    logError('renderer_creation', error);
+    return new THREE.WebGLRenderer({ 
+      antialias: false,
+      powerPreference: 'low-power',
+      failIfMajorPerformanceCaveat: false
+    });
+  }
+}
+
+// Modify createSafeComposer to disable post-processing on mobile
+function createSafeComposer(renderer, scene, camera) {
+  try {
+    if (isMobile) {
+      // Skip post-processing entirely on mobile
+      return {
+        render: () => renderer.render(scene, camera),
+        setSize: (w, h) => renderer.setSize(w, h, false)
+      };
+    }
+    
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    
+    // Only add heavy effects on non-mobile devices
+    if (!isMobile && !isIOS) {
+      const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        0.5,  // Reduced strength
+        0.1,  // Reduced radius
+        0.3   // Reduced threshold
+      );
+      composer.addPass(bloomPass);
+    }
+    
+    return composer;
+  } catch (error) {
+    logError('composer_creation', error);
+    return {
+      render: () => renderer.render(scene, camera),
+      setSize: (w, h) => renderer.setSize(w, h, false)
     };
+  }
+}
 
-    // Add mobile-specific error handling
-    window.addEventListener('error', function(event) {
-      if (isMobile) {
-        console.error('Mobile error:', event.error);
-        // Attempt to recover from error
-        if (event.error && event.error.message && event.error.message.includes('WebGL')) {
-          // Try to reinitialize with lower settings
-          renderer.dispose();
-          renderer = new THREE.WebGLRenderer({ 
-            antialias: false,
-            powerPreference: 'low-power'
-          });
-          renderer.setSize(window.innerWidth, window.innerHeight);
-          document.body.appendChild(renderer.domElement);
-        }
-      }
-    });
+// Modify loadSafeHDR to skip HDR on mobile
+function loadSafeHDR(scene, renderer) {
+  if (isMobile) {
+    // Skip HDR on mobile, use simple lighting
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+    return;
+  }
+  
+  try {
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    new RGBELoader()
+      .setPath('/universe/HDRI/')
+      .load('1.hdr', texture => {
+        const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+        scene.environment = envMap;
+        texture.dispose();
+        pmremGenerator.dispose();
+      });
+  } catch (error) {
+    logError('hdr_loading', error);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+  }
+}
 
-  }) // Closes the .then(([users, ...textures]) => { ... })
-  .catch(error => {
-    console.error('Error loading universe assets or processing users:', error);
-  });
+// Modify setSafeBlur to disable blur on mobile
+function setSafeBlur(amount) {
+  if (isMobile) {
+    // Disable blur on mobile
+    return;
+  }
+  
+  try {
+    // Clamp blur amount
+    const safeAmount = Math.max(0, Math.min(5, amount));
+    renderer.domElement.style.filter = `blur(${safeAmount}px)`;
+  } catch (error) {
+    logError('blur_setting', error);
+  }
+}
+
+// Global error handler with iOS fallback
+window.addEventListener('error', (e) => {
+  if (isIOS && !hasShownError) {
+    hasShownError = true;
+    logError('ios-fallback', e.error || new Error('Unknown iOS error'));
+    
+    // Show user-friendly message
+    const message = document.createElement('div');
+    message.style.position = 'fixed';
+    message.style.top = '50%';
+    message.style.left = '50%';
+    message.style.transform = 'translate(-50%, -50%)';
+    message.style.color = 'white';
+    message.style.textAlign = 'center';
+    message.style.padding = '20px';
+    message.style.background = 'rgba(0,0,0,0.8)';
+    message.style.borderRadius = '10px';
+    message.style.zIndex = '9999';
+    message.innerHTML = `
+      <h2>Mobile Device Detected</h2>
+      <p>This experience doesn't work on mobile devices.</p>
+      <p>Please return on desktop for the full experience.</p>
+    `;
+    document.body.appendChild(message);
+  }
+});
